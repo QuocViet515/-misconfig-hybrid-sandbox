@@ -46,6 +46,10 @@ on:
         description: "Path to the OpenStack RC file on the self-hosted runner"
         required: false
         default: "~/openrc"
+      openstack_activate_path:
+        description: "Path to the OpenStack CLI/Kolla virtualenv activation script on the self-hosted runner"
+        required: false
+        default: "~/kolla-venv/bin/activate"
       project_prefix:
         description: "Resource prefix shared across the AWS/OpenStack demo lab"
         required: false
@@ -140,7 +144,12 @@ jobs:
       - name: Verify OpenStack authentication
         if: github.event.inputs.include_openstack_scan == 'true' || github.event.inputs.enable_runtime_remediation == 'true'
         run: |
+          OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
           OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
+            test -f "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+            source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+          fi
           test -f "${OPENRC_PATH/#\~/$HOME}"
           set -a
           source "${OPENRC_PATH/#\~/$HOME}"
@@ -175,7 +184,12 @@ jobs:
       - name: Export and normalize OpenStack findings
         if: github.event.inputs.include_openstack_scan == 'true'
         run: |
+          OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
           OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
+            test -f "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+            source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+          fi
           set -a
           source "${OPENRC_PATH/#\~/$HOME}"
           set +a
@@ -285,7 +299,12 @@ jobs:
       - name: Execute OpenStack runtime remediation
         if: github.event.inputs.enable_runtime_remediation == 'true' && github.event.inputs.include_openstack_scan == 'true'
         run: |
+          OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
           OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
+            test -f "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+            source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+          fi
           set -a
           source "${OPENRC_PATH/#\~/$HOME}"
           set +a
@@ -402,6 +421,8 @@ jobs:
             echo "- Pipeline source: \`${{ github.event.inputs.pipeline_source }}\`"
             echo "- AWS scan enabled: \`${{ github.event.inputs.include_aws_scan }}\`"
             echo "- OpenStack scan enabled: \`${{ github.event.inputs.include_openstack_scan }}\`"
+            echo "- OpenStack activate path: \`${{ github.event.inputs.openstack_activate_path }}\`"
+            echo "- OpenStack RC path: \`${{ github.event.inputs.openrc_path }}\`"
             echo "- Publish to SIEM: \`${{ github.event.inputs.publish_to_siem }}\`"
             echo "- Runtime remediation: \`${{ github.event.inputs.enable_runtime_remediation }}\`"
             echo "- M5 drift reconcile: \`${{ github.event.inputs.reconcile_m5_drift }}\`"
