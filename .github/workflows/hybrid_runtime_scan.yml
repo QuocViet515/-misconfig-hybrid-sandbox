@@ -121,9 +121,12 @@ jobs:
         run: |
           mkdir -p "$HOME/.local/bin"
           curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
-          install -m 0755 ./bin/tfsec "$HOME/.local/bin/tfsec"
+          if command -v tfsec >/dev/null 2>&1; then
+            install -m 0755 "$(command -v tfsec)" "$HOME/.local/bin/tfsec"
+          fi
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/tfsec" --version
 
       - name: Install remediation toolchain
         if: github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true'
