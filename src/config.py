@@ -8,6 +8,20 @@ from typing import Dict, Any
 load_dotenv()
 
 
+def _get_env(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    return value
+
+
+def _get_env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    return int(value)
+
+
 class Config:
     """Base configuration"""
     
@@ -21,12 +35,12 @@ class Config:
     AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID", "")
     
     # Elasticsearch/SIEM
-    ELASTICSEARCH_HOST = os.getenv("ELASTICSEARCH_HOST", "localhost")
-    ELASTICSEARCH_PORT = int(os.getenv("ELASTICSEARCH_PORT", 9200))
-    ELASTICSEARCH_SCHEME = os.getenv("ELASTICSEARCH_SCHEME", "http")
-    ELASTICSEARCH_USER = os.getenv("ELASTICSEARCH_USER", "elastic")
+    ELASTICSEARCH_HOST = _get_env("ELASTICSEARCH_HOST", "localhost")
+    ELASTICSEARCH_PORT = _get_env_int("ELASTICSEARCH_PORT", 9200)
+    ELASTICSEARCH_SCHEME = _get_env("ELASTICSEARCH_SCHEME", "http")
+    ELASTICSEARCH_USER = _get_env("ELASTICSEARCH_USER", "elastic")
     ELASTICSEARCH_PASSWORD = os.getenv("ELASTICSEARCH_PASSWORD", "")
-    ELASTICSEARCH_INDEX_PREFIX = os.getenv("ELASTICSEARCH_INDEX_PREFIX", "misconfig")
+    ELASTICSEARCH_INDEX_PREFIX = _get_env("ELASTICSEARCH_INDEX_PREFIX", "misconfig")
     
     # PostgreSQL
     DATABASE_URL = os.getenv(
@@ -35,9 +49,9 @@ class Config:
     )
     
     # Redis
-    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-    REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-    REDIS_DB = int(os.getenv("REDIS_DB", 0))
+    REDIS_HOST = _get_env("REDIS_HOST", "localhost")
+    REDIS_PORT = _get_env_int("REDIS_PORT", 6379)
+    REDIS_DB = _get_env_int("REDIS_DB", 0)
     
     # Scanner Settings
     ENABLE_SCOUTSUITE = os.getenv("ENABLE_SCOUTSUITE", "true").lower() == "true"
@@ -70,8 +84,8 @@ class Config:
     LOG_FORMAT = os.getenv("LOG_FORMAT", "json")
     
     # API
-    API_HOST = os.getenv("API_HOST", "0.0.0.0")
-    API_PORT = int(os.getenv("API_PORT", 8000))
+    API_HOST = _get_env("API_HOST", "0.0.0.0")
+    API_PORT = _get_env_int("API_PORT", 8000)
     API_DEBUG = os.getenv("API_DEBUG", "false").lower() == "true"
 
 
