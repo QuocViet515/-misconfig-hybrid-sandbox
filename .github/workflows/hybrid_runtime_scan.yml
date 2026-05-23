@@ -188,6 +188,7 @@ jobs:
       - name: Export and normalize OpenStack findings
         if: github.event.inputs.include_openstack_scan == 'true'
         run: |
+          PYTHON_BIN="$(command -v python)"
           OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
           OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
           if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
@@ -210,7 +211,7 @@ jobs:
           if [[ -f ./reports/raw/openstack/live/role_assignments.json ]]; then
             FINDING_ARGS+=(--role-assignments-file ./reports/raw/openstack/live/role_assignments.json)
           fi
-          python -m src.openstack.findings \
+          "$PYTHON_BIN" -m src.openstack.findings \
             "${FINDING_ARGS[@]}" \
             --output ./scan_results/openstack_findings.json
 
@@ -313,6 +314,7 @@ jobs:
       - name: Execute OpenStack runtime remediation
         if: github.event.inputs.enable_runtime_remediation == 'true' && github.event.inputs.include_openstack_scan == 'true'
         run: |
+          PYTHON_BIN="$(command -v python)"
           OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
           OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
           if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
@@ -322,7 +324,7 @@ jobs:
           set -a
           source "${OPENRC_PATH/#\~/$HOME}"
           set +a
-          python -m src.remediation.runtime_executor \
+          "$PYTHON_BIN" -m src.remediation.runtime_executor \
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
             --provider openstack \
