@@ -28,7 +28,7 @@
           - >-
             SecurityGroupRules[?IsEgress==`false` &&
             (CidrIpv4==`0.0.0.0/0` || CidrIpv6==`::/0`) &&
-            (IpProtocol==`-1` || FromPort==`22` || FromPort==`3389` || FromPort==`0`)]
+            (IpProtocol==`-1` || FromPort==`-1` || FromPort==`22` || FromPort==`3389` || FromPort==`0`)]
           - --output
           - json
       register: sg_rules_raw
@@ -55,6 +55,12 @@
       register: revoke_results
       changed_when: true
       when: dangerous_rules | length > 0
+
+    - name: Ensure remediation log directory exists
+      ansible.builtin.file:
+        path: "{{ log_file | dirname }}"
+        state: directory
+        mode: "0755"
 
     - name: Persist remediation change log
       ansible.builtin.copy:

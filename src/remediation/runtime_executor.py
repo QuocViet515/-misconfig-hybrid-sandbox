@@ -69,6 +69,18 @@ def openstack_available() -> bool:
     return shutil.which("openstack") is not None
 
 
+def strip_openstack_name_scope(value: str) -> str:
+    return str(value or "").split("@", 1)[0]
+
+
+def openstack_show_id(resource: str, name_or_id: str) -> str:
+    target = strip_openstack_name_scope(name_or_id)
+    result = run_command(["openstack", resource, "show", target, "-f", "value", "-c", "id"])
+    if result.returncode != 0:
+        raise ValueError(result.stderr.strip() or f"Unable to resolve OpenStack {resource} id for {target}")
+    return result.stdout.strip()
+
+
 def parse_rule_port_range(raw: str) -> Tuple[str, str]:
     if ":" in raw:
         start, end = raw.split(":", 1)
@@ -106,19 +118,29 @@ def remediation_plan_for_openstack(finding: Dict[str, Any]) -> Tuple[List[List[s
         return [command], {"target": resource_name}
 
     if code == "OPENSTACK_PROJECT_ADMIN_ASSIGNMENT":
-        project = str(metadata.get("project") or "")
-        role = str(metadata.get("role") or "admin")
-        user = str(finding.get("resource_name") or "")
-        command = ["openstack", "role", "remove", "--project", project, "--user", user, role]
-        return [command], {"project": project, "role": role, "user": user}
+        project_name = str(metadata.get("project") or "")
+        role_name = str(metadata.get("role") or "admin")
+        user_name = str(finding.get("resource_name") or "")
+        project_id = openstack_show_id("project", project_name)
+        user_id = openstack_show_id("user", user_name)
+        role_id = openstack_show_id("role", role_name)
+        command = ["openstack", "role", "remove", "--project", project_id, "--user", user_id, role_id]
+        return [
+            command
+        ], {
+            "project": project_name,
+            "user": user_name,
+            "role": role_name,
+            "project_id": project_id,
+            "user_id": user_id,
+            "role_id": role_id,
+        }
 
     if code == "OPENSTACK_SG_WIDE_OPEN":
-        resource_id = str(finding.get("resource_id") or "")
-        resource_name = str(finding.get("resource_name") or resource_id)
-        list_command = ["openstack", "security", "group", "rule", "list", resource_name, "-f", "json"]
-        return [list_command], {
-            "resource_id": resource_id,
-            "resource_name": resource_name,
+        rule_id = str(finding.get("resource_id") or "")
+        delete_command = ["openstack", "security", "group", "rule", "delete", rule_id]
+        return [delete_command], {
+            "rule_id": rule_id,
             "port_range": metadata.get("port_range"),
             "remote_ip": metadata.get("remote_ip"),
         }
@@ -126,18 +148,43 @@ def remediation_plan_for_openstack(finding: Dict[str, Any]) -> Tuple[List[List[s
     raise ValueError(f"Unsupported OpenStack finding code: {code}")
 
 
-def expand_openstack_sg_plan(initial_output: str) -> List[List[str]]:
-    try:
-        rows = json.loads(initial_output or "[]")
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Unable to parse security group rules JSON: {exc}") from exc
+def verify_openstack_role_removed(metadata: Dict[str, Any]) -> Tuple[bool, str]:
+    result = run_command(
+        [
+            "openstack",
+            "role",
+            "assignment",
+            "list",
+            "--project",
+            str(metadata.get("project_id") or ""),
+            "--user",
+            str(metadata.get("user_id") or ""),
+            "-f",
+            "json",
+        ]
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "Unable to verify OpenStack role assignment state."
 
-    deletions: List[List[str]] = []
-    for row in filter_wide_open_rules(rows):
-        rule_id = str(get_first(row, "ID", "id") or "")
-        if rule_id:
-            deletions.append(["openstack", "security", "group", "rule", "delete", rule_id])
-    return deletions
+    try:
+        rows = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        return False, f"Unable to parse role assignment verification output: {exc}"
+
+    role_id = str(metadata.get("role_id") or "")
+    if any(str(get_first(row, "Role", "role") or "") == role_id for row in rows if isinstance(row, dict)):
+        return False, "Role assignment still exists after remediation command."
+    return True, "Role assignment removed."
+
+
+def verify_openstack_sg_rule_deleted(rule_id: str) -> Tuple[bool, str]:
+    result = run_command(["openstack", "security", "group", "rule", "show", rule_id, "-f", "json"])
+    if result.returncode == 0:
+        return False, "Security group rule still exists after remediation command."
+    stderr = (result.stderr or "").lower()
+    if "no securitygrouprule found" in stderr or "no security group rule found" in stderr:
+        return True, "Security group rule deleted."
+    return False, result.stderr.strip() or "Unable to verify security group rule state."
 
 
 def approval_granted(
@@ -224,7 +271,7 @@ def execute_openstack_plan(
 
     if simulate_success:
         if str(finding.get("finding_code")) == "OPENSTACK_SG_WIDE_OPEN":
-            commands = [["openstack", "security", "group", "rule", "delete", "<wide-open-rule-id>"]]
+            commands = [["openstack", "security", "group", "rule", "delete", str(finding.get("resource_id") or "<wide-open-rule-id>")]]
         return (
             RemediationStatus.SUCCESS,
             "Simulated successful remediation for demo flow.",
@@ -248,18 +295,6 @@ def execute_openstack_plan(
             metadata,
         )
 
-    code = str(finding.get("finding_code") or "")
-    if code == "OPENSTACK_SG_WIDE_OPEN":
-        first = run_command(commands[0])
-        metadata["list_stdout"] = first.stdout
-        metadata["list_stderr"] = first.stderr
-        if first.returncode != 0:
-            return RemediationStatus.FAILED, first.stderr.strip() or "Failed to list SG rules", commands, metadata
-        delete_commands = expand_openstack_sg_plan(first.stdout)
-        if not delete_commands:
-            return RemediationStatus.SUCCESS, "No wide-open rules remain.", [], metadata
-        commands = delete_commands
-
     executed: List[str] = []
     for command in commands:
         result = run_command(command)
@@ -279,6 +314,18 @@ def execute_openstack_plan(
                 commands,
                 metadata,
             )
+
+    code = str(finding.get("finding_code") or "")
+    if code == "OPENSTACK_PROJECT_ADMIN_ASSIGNMENT":
+        verified, note = verify_openstack_role_removed(metadata)
+        if not verified:
+            return RemediationStatus.FAILED, note, commands, metadata
+        return RemediationStatus.SUCCESS, note, commands, metadata
+    if code == "OPENSTACK_SG_WIDE_OPEN":
+        verified, note = verify_openstack_sg_rule_deleted(str(finding.get("resource_id") or ""))
+        if not verified:
+            return RemediationStatus.FAILED, note, commands, metadata
+        return RemediationStatus.SUCCESS, note, commands, metadata
 
     return RemediationStatus.SUCCESS, "Runtime remediation completed.", commands, metadata
 

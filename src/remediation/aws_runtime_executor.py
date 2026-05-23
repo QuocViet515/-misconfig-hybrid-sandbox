@@ -905,6 +905,7 @@ def main() -> int:
     findings_after = copy.deepcopy(findings)
     by_id = {str(item.get("finding_id") or ""): item for item in findings_after}
     discovery_cache: Dict[str, Any] = {}
+    flow_result_cache: Dict[str, Tuple[RemediationStatus, str, List[List[str]], Dict[str, Any]]] = {}
 
     for finding in findings:
         flow = classify_runtime_flow(finding)
@@ -944,43 +945,47 @@ def main() -> int:
             )
             continue
 
-        if flow == "public_s3":
-            if flow not in discovery_cache:
-                discovery_cache[flow] = discover_buckets(
-                    args.project_prefix,
-                    {"M1-PublicS3", "M1-PublicS3Policy"},
-                )
-            status, notes, commands, metadata = execute_public_s3_flow(
-                finding,
-                region=args.region,
-                project_prefix=args.project_prefix,
-                execute=args.execute,
-                simulate_success=args.simulate_success,
-                known_buckets=discovery_cache[flow],
-            )
-        elif flow == "open_security_group":
-            if flow not in discovery_cache:
-                discovery_cache[flow] = discover_security_groups(args.region)
-            status, notes, commands, metadata = execute_open_sg_flow(
-                finding,
-                region=args.region,
-                execute=args.execute,
-                simulate_success=args.simulate_success,
-                known_sg_ids=discovery_cache[flow],
-            )
+        if flow in flow_result_cache:
+            status, notes, commands, metadata = copy.deepcopy(flow_result_cache[flow])
         else:
-            if flow not in discovery_cache:
-                discovery_cache[flow] = discover_storage_targets(args.project_prefix, args.region)
-            status, notes, commands, metadata = execute_storage_flow(
-                finding,
-                region=args.region,
-                project_prefix=args.project_prefix,
-                execute=args.execute,
-                simulate_success=args.simulate_success,
-                force_rds_cutover=args.force_rds_cutover,
-                delete_archived_rds=args.delete_archived_rds,
-                known_targets=discovery_cache[flow],
-            )
+            if flow == "public_s3":
+                if flow not in discovery_cache:
+                    discovery_cache[flow] = discover_buckets(
+                        args.project_prefix,
+                        {"M1-PublicS3", "M1-PublicS3Policy"},
+                    )
+                status, notes, commands, metadata = execute_public_s3_flow(
+                    finding,
+                    region=args.region,
+                    project_prefix=args.project_prefix,
+                    execute=args.execute,
+                    simulate_success=args.simulate_success,
+                    known_buckets=discovery_cache[flow],
+                )
+            elif flow == "open_security_group":
+                if flow not in discovery_cache:
+                    discovery_cache[flow] = discover_security_groups(args.region)
+                status, notes, commands, metadata = execute_open_sg_flow(
+                    finding,
+                    region=args.region,
+                    execute=args.execute,
+                    simulate_success=args.simulate_success,
+                    known_sg_ids=discovery_cache[flow],
+                )
+            else:
+                if flow not in discovery_cache:
+                    discovery_cache[flow] = discover_storage_targets(args.project_prefix, args.region)
+                status, notes, commands, metadata = execute_storage_flow(
+                    finding,
+                    region=args.region,
+                    project_prefix=args.project_prefix,
+                    execute=args.execute,
+                    simulate_success=args.simulate_success,
+                    force_rds_cutover=args.force_rds_cutover,
+                    delete_archived_rds=args.delete_archived_rds,
+                    known_targets=discovery_cache[flow],
+                )
+            flow_result_cache[flow] = copy.deepcopy((status, notes, commands, metadata))
 
         completed_at = utc_now() if status != RemediationStatus.PENDING else None
         events.append(
