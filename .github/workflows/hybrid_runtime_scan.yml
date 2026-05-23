@@ -291,6 +291,7 @@ jobs:
         env:
           AWS_REGION: ${{ github.event.inputs.aws_region }}
         run: |
+          PYTHON_BIN="$(command -v python)"
           export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
           RDS_ARGS=()
           if [[ "${{ github.event.inputs.force_rds_cutover }}" == "true" ]]; then
@@ -299,7 +300,7 @@ jobs:
           if [[ "${{ github.event.inputs.delete_archived_rds }}" == "true" ]]; then
             RDS_ARGS+=(--delete-archived-rds)
           fi
-          python -m src.remediation.aws_runtime_executor \
+          "$PYTHON_BIN" -m src.remediation.aws_runtime_executor \
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
             --region "${AWS_REGION}" \
@@ -341,11 +342,13 @@ jobs:
         env:
           AWS_REGION: ${{ github.event.inputs.aws_region }}
         run: |
+          PYTHON_BIN="$(command -v python)"
+          export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
           DRIFT_ARGS=()
           if [[ "${{ github.event.inputs.simulate_m5_drift }}" == "true" ]]; then
             DRIFT_ARGS+=(--simulate-drift)
           fi
-          python -m src.remediation.drift_reconcile \
+          "$PYTHON_BIN" -m src.remediation.drift_reconcile \
             --terraform-dir ./iac/terraform \
             --region "${AWS_REGION}" \
             --project-prefix "${{ github.event.inputs.project_prefix }}" \
@@ -359,7 +362,9 @@ jobs:
       - name: Generate IaC remediation PR bundle
         if: github.event.inputs.generate_iac_pr == 'true'
         run: |
-          python -m src.remediation.iac_pr_prepare \
+          PYTHON_BIN="$(command -v python)"
+          export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
+          "$PYTHON_BIN" -m src.remediation.iac_pr_prepare \
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
             --terraform-dir ./iac/terraform \
@@ -372,6 +377,7 @@ jobs:
       - name: Build remediation metrics
         if: github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true'
         run: |
+          PYTHON_BIN="$(command -v python)"
           REMEDIATION_ARGS=()
           if [[ -f ./artifacts/remediation/aws_runtime_events.json ]]; then
             REMEDIATION_ARGS+=(--remediation-events ./artifacts/remediation/aws_runtime_events.json)
@@ -385,7 +391,7 @@ jobs:
           if [[ -f ./artifacts/iac_pr/self_hosted_bundle/iac_pr_events.json ]]; then
             REMEDIATION_ARGS+=(--remediation-events ./artifacts/iac_pr/self_hosted_bundle/iac_pr_events.json)
           fi
-          python -m src.remediation.metrics \
+          "$PYTHON_BIN" -m src.remediation.metrics \
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
             --output ./artifacts/remediation/hybrid_metrics.json \
@@ -397,6 +403,7 @@ jobs:
       - name: Publish remediation events and metrics
         if: github.event.inputs.publish_to_siem == 'true' && (github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true')
         run: |
+          PYTHON_BIN="$(command -v python)"
           PUBLISH_ARGS=()
           if [[ -f ./artifacts/remediation/aws_runtime_events.json ]]; then
             PUBLISH_ARGS+=(--remediation-events ./artifacts/remediation/aws_runtime_events.json)
@@ -410,7 +417,7 @@ jobs:
           if [[ -f ./artifacts/remediation/hybrid_metrics.json ]]; then
             PUBLISH_ARGS+=(--metrics ./artifacts/remediation/hybrid_metrics.json)
           fi
-          python -m src.siem.publisher \
+          "$PYTHON_BIN" -m src.siem.publisher \
             --pipeline-source "${{ github.event.inputs.pipeline_source }}-remediation" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}" \
