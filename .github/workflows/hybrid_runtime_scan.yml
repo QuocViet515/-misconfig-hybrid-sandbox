@@ -10,6 +10,10 @@ on:
         description: "Export OpenStack evidence and normalize it on the self-hosted runner"
         required: false
         default: "true"
+      include_openstack_object_storage:
+        description: "Include the M1 OpenStack object storage/Swift scenario during export and normalization"
+        required: false
+        default: "false"
       publish_to_siem:
         description: "Publish findings, triage, and remediation events to Elasticsearch"
         required: false
@@ -193,11 +197,21 @@ jobs:
           set -a
           source "${OPENRC_PATH/#\~/$HOME}"
           set +a
-          PROJECT_PREFIX="${{ github.event.inputs.project_prefix }}" bash ./openstack/export_misconfig_openstack.sh
+          PROJECT_PREFIX="${{ github.event.inputs.project_prefix }}" \
+          OPENSTACK_INCLUDE_OBJECT_STORAGE="${{ github.event.inputs.include_openstack_object_storage }}" \
+            bash ./openstack/export_misconfig_openstack.sh
+          FINDING_ARGS=()
+          if [[ -f ./reports/raw/openstack/live/container_public.json ]]; then
+            FINDING_ARGS+=(--container-file ./reports/raw/openstack/live/container_public.json)
+          fi
+          if [[ -f ./reports/raw/openstack/live/security_group_rules.json ]]; then
+            FINDING_ARGS+=(--sg-rules-file ./reports/raw/openstack/live/security_group_rules.json)
+          fi
+          if [[ -f ./reports/raw/openstack/live/role_assignments.json ]]; then
+            FINDING_ARGS+=(--role-assignments-file ./reports/raw/openstack/live/role_assignments.json)
+          fi
           python -m src.openstack.findings \
-            --container-file ./reports/raw/openstack/live/container_public.json \
-            --sg-rules-file ./reports/raw/openstack/live/security_group_rules.json \
-            --role-assignments-file ./reports/raw/openstack/live/role_assignments.json \
+            "${FINDING_ARGS[@]}" \
             --output ./scan_results/openstack_findings.json
 
       - name: Merge AWS and OpenStack findings into one hybrid batch
@@ -421,6 +435,7 @@ jobs:
             echo "- Pipeline source: \`${{ github.event.inputs.pipeline_source }}\`"
             echo "- AWS scan enabled: \`${{ github.event.inputs.include_aws_scan }}\`"
             echo "- OpenStack scan enabled: \`${{ github.event.inputs.include_openstack_scan }}\`"
+            echo "- OpenStack object storage enabled: \`${{ github.event.inputs.include_openstack_object_storage }}\`"
             echo "- OpenStack activate path: \`${{ github.event.inputs.openstack_activate_path }}\`"
             echo "- OpenStack RC path: \`${{ github.event.inputs.openrc_path }}\`"
             echo "- Publish to SIEM: \`${{ github.event.inputs.publish_to_siem }}\`"
