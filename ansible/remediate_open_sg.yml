@@ -1,0 +1,79 @@
+---
+- name: Remove dangerous AWS security group rules
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    aws_region: "{{ aws_region | default('ap-southeast-1') }}"
+    log_file: "{{ log_file | default('artifacts/remediation/ansible/security_group_changes.json') }}"
+  tasks:
+    - name: Require sg_id
+      ansible.builtin.assert:
+        that:
+          - sg_id is defined
+          - sg_id | length > 0
+        fail_msg: "sg_id must be provided"
+
+    - name: Describe current security group rules
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ec2
+          - describe-security-group-rules
+          - --region
+          - "{{ aws_region }}"
+          - --filters
+          - "Name=group-id,Values={{ sg_id }}"
+          - --query
+          - >-
+            SecurityGroupRules[?IsEgress==`false` &&
+            (CidrIpv4==`0.0.0.0/0` || CidrIpv6==`::/0`) &&
+            (IpProtocol==`-1` || FromPort==`22` || FromPort==`3389` || FromPort==`0`)]
+          - --output
+          - json
+      register: sg_rules_raw
+      changed_when: false
+
+    - name: Parse current rule set
+      ansible.builtin.set_fact:
+        dangerous_rules: "{{ sg_rules_raw.stdout | from_json }}"
+        sg_rules: "{{ sg_rules_raw.stdout | from_json }}"
+
+    - name: Revoke dangerous ingress rules
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ec2
+          - revoke-security-group-ingress
+          - --region
+          - "{{ aws_region }}"
+          - --group-id
+          - "{{ sg_id }}"
+          - --security-group-rule-ids
+          - "{{ item.SecurityGroupRuleId }}"
+      loop: "{{ dangerous_rules }}"
+      register: revoke_results
+      changed_when: true
+      when: dangerous_rules | length > 0
+
+    - name: Persist remediation change log
+      ansible.builtin.copy:
+        dest: "{{ log_file }}"
+        mode: "0644"
+        content: |-
+          {{
+            {
+              "security_group_id": sg_id,
+              "region": aws_region,
+              "timestamp": ansible_date_time.iso8601,
+              "dangerous_rule_count": dangerous_rules | length,
+              "before_rules": sg_rules,
+              "removed_rules": dangerous_rules,
+              "command_results": (
+                revoke_results.results
+                | default([])
+                | map(attribute='stdout')
+                | list
+              )
+            } | to_nice_json
+          }}

@@ -1,0 +1,352 @@
+name: IaC Scan
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'iac/terraform/**'
+      - '.github/workflows/iac_scan.yml'
+  push:
+    branches:
+      - main
+      - feat/normalize
+      - develop
+    paths:
+      - 'iac/terraform/**'
+  workflow_dispatch:
+    inputs:
+      auto_open_fix_pr:
+        description: "Open an automated remediation PR from the generated bundle"
+        required: false
+        default: 'false'
+      dispatch_live_integrations:
+        description: "Send triage notifications to Jira/ServiceNow/Slack/Teams"
+        required: false
+        default: 'false'
+
+jobs:
+  container-secret-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run container secret guard
+        id: container_secret_guard
+        run: |
+          set +e
+          python scripts/scan_container_secrets.py \
+            --paths ./iac/terraform/m6_container_secrets.tf ./iac/terraform/docker \
+            --output ./artifacts/security/container_secret_report.json
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          exit 0
+
+      - name: Upload container secret report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-secret-report
+          path: ./artifacts/security/container_secret_report.json
+
+      - name: Alert Security team on pull request
+        if: steps.container_secret_guard.outputs.exit_code != '0' && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('./artifacts/security/container_secret_report.json', 'utf8'));
+            const findings = report.findings || [];
+            const body = [
+              '## Security Alert: container secrets detected',
+              '',
+              `Detected findings: **${findings.length}**`,
+              '',
+              ...findings.slice(0, 10).map(f => `- ${f.rule_id} in \`${f.file_path}:${f.line}\``),
+              '',
+              'Deployment is blocked until these secrets are removed.'
+            ].join('\n');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Alert Security team with issue
+        if: steps.container_secret_guard.outputs.exit_code != '0' && github.event_name != 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('./artifacts/security/container_secret_report.json', 'utf8'));
+            const findings = report.findings || [];
+            const body = [
+              'Container secret guard blocked the pipeline.',
+              '',
+              `Detected findings: **${findings.length}**`,
+              '',
+              ...findings.slice(0, 10).map(f => `- ${f.rule_id} in \`${f.file_path}:${f.line}\``),
+              '',
+              'Security team review is required before deployment resumes.'
+            ].join('\n');
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Security alert: embedded container secrets detected',
+              labels: ['security'],
+              body
+            });
+
+      - name: Block pipeline
+        if: steps.container_secret_guard.outputs.exit_code != '0'
+        run: |
+          echo "Embedded container secrets detected. Blocking pipeline." >&2
+          exit 1
+
+  tf-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./iac/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up tf
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        run: terraform init -input=false -backend=false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+  checkov-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Base Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Verify Python runtime dependencies
+        run: |
+          python -c "import dotenv, pydantic; print('base runtime ok')"
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests
+
+      - name: Install Checkov
+        run: |
+          python -m venv /tmp/checkov-venv
+          /tmp/checkov-venv/bin/pip install --upgrade pip
+          /tmp/checkov-venv/bin/pip install -r requirements-checkov.txt
+
+      - name: Install tfsec
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+          sudo install -m 0755 ./bin/tfsec /usr/local/bin/tfsec
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
+      - name: Run Checkov
+        id: checkov
+        run: |
+          /tmp/checkov-venv/bin/checkov -d ./iac/terraform --output json --output-file checkov-report.json \
+          --skip-framework dockerfile || true
+
+      - name: Upload Checkov report
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: checkov-report.json
+
+      - name: Generate normalized findings
+        run: |
+          PYTHON_BIN="$(command -v python)"
+          export PATH="/tmp/checkov-venv/bin:$PATH"
+          "$PYTHON_BIN" -m src.scanners.runner \
+            --checkov \
+            --tfsec \
+            --trivy \
+            --output-dir ./scan_results \
+            --terraform-dir ./iac/terraform \
+            --trivy-scan-ref ./iac/terraform
+
+      - name: Triage findings
+        run: |
+          python -m src.triage.engine \
+            --input ./scan_results/findings.json \
+            --output ./triage_results/decisions.json
+
+      - name: Generate manual review notifications
+        env:
+          JIRA_URL: ${{ secrets.JIRA_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+          JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+          JIRA_ISSUE_TYPE: ${{ secrets.JIRA_ISSUE_TYPE }}
+          SERVICENOW_URL: ${{ secrets.SERVICENOW_URL }}
+          SERVICENOW_USER: ${{ secrets.SERVICENOW_USER }}
+          SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+          SERVICENOW_TABLE: ${{ secrets.SERVICENOW_TABLE }}
+          SERVICENOW_CATEGORY: ${{ secrets.SERVICENOW_CATEGORY }}
+          SERVICENOW_SUBCATEGORY: ${{ secrets.SERVICENOW_SUBCATEGORY }}
+          SERVICENOW_ASSIGNMENT_GROUP_SYS_ID: ${{ secrets.SERVICENOW_ASSIGNMENT_GROUP_SYS_ID }}
+          SERVICENOW_CALLER_SYS_ID: ${{ secrets.SERVICENOW_CALLER_SYS_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: |
+          NOTIFICATION_ARGS=()
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.dispatch_live_integrations }}" == "true" ]]; then
+            NOTIFICATION_ARGS+=(--dispatch-live --fail-on-dispatch-error)
+          fi
+          python -m src.triage.notifications \
+            --findings ./scan_results/findings.json \
+            --decisions ./triage_results/decisions.json \
+            --output-dir ./artifacts/triage_notifications \
+            "${NOTIFICATION_ARGS[@]}"
+
+      - name: Install OPA
+        run: |
+          curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+
+      - name: Generate IAM wildcard review ticket
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python -m src.remediation.opa_ticket \
+            --findings ./scan_results/findings.json \
+            --decisions ./triage_results/decisions.json \
+            --output-dir ./artifacts/tickets/iam_wildcard_review \
+            --pipeline-source github-actions-iac \
+            --branch "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --token "${GITHUB_TOKEN}" \
+            --create-github-issue
+
+      - name: Upload IAM review ticket artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iam-wildcard-review
+          path: artifacts/tickets/iam_wildcard_review
+
+      - name: Upload normalized IaC pipeline artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: normalized-iac-pipeline
+          path: |
+            scan_results/
+            triage_results/
+            artifacts/triage_notifications
+
+      - name: Prepare IaC remediation PR bundle
+        run: |
+          python -m src.remediation.iac_pr_prepare \
+            --findings ./scan_results/findings.json \
+            --decisions ./triage_results/decisions.json \
+            --terraform-dir ./iac/terraform \
+            --output-dir ./artifacts/iac_pr \
+            --run-label checkov_pr_bundle \
+            --pipeline-source github-actions-iac \
+            --branch "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}"
+
+      - name: Upload IaC remediation bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-remediation-bundle
+          path: artifacts/iac_pr/checkov_pr_bundle
+
+      - name: Open automated remediation PR
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.auto_open_fix_pr == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python -m src.remediation.open_fix_pr \
+            --bundle-dir ./artifacts/iac_pr/checkov_pr_bundle \
+            --repo-root . \
+            --repo "${GITHUB_REPOSITORY}" \
+            --token "${GITHUB_TOKEN}" \
+            --base-branch main
+
+      - name: Comment PR with findings
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('checkov-report.json', 'utf8'));
+            const failed =
+              (report.results && report.results.failed_checks) ||
+              (report.check_type && report.check_type.results && report.check_type.results.failed_checks) ||
+              [];
+            const bundle = JSON.parse(fs.readFileSync('artifacts/iac_pr/checkov_pr_bundle/summary.json', 'utf8'));
+            
+            if (failed.length > 0 || bundle.supported_findings_count > 0) {
+              const comment = `## Checkov Findings\n\n` +
+                `**Failed Checks: ${failed.length}**\n` +
+                `**Autofix-ready findings: ${bundle.supported_findings_count}**\n` +
+                `**Suggested branch: ${bundle.suggested_branch}**\n\n` +
+                failed.slice(0, 10).map(c =>
+                  `- ${c.check_id}: ${c.check_name} (${c.resource})`
+                ).join('\n') +
+                `\n\nGenerated bundle artifact: \`iac-remediation-bundle\``;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+  tfsec-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: ./iac/terraform
+          format: json
+          additional_args: --out tfsec-report.json
+        continue-on-error: true
+
+      - name: Upload report tfsec
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfsec-report
+          path: ./iac/terraform/tfsec-report.json

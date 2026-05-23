@@ -1,0 +1,10 @@
+# Core application runtime
+
+# Data processing
+pyyaml==6.0.1
+jsonschema==4.17.3
+python-dotenv==1.0.1
+pydantic==2.4.2
+
+# SIEM
+elasticsearch==8.13.2

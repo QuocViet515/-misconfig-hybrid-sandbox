@@ -1,0 +1,4 @@
+# Optional remediation-specific dependencies.
+# Kept separate because c7n 0.9.50 conflicts with Checkov's pinned boto3 version.
+ansible-core==2.15.5
+c7n==0.9.50

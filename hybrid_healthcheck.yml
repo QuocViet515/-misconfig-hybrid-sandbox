@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: AWS identity
+      ansible.builtin.command: aws sts get-caller-identity --profile hybrid-lab --output json
+      changed_when: false
+
+    - name: OpenStack token
+      ansible.builtin.command: openstack token issue -f json
+      changed_when: false

@@ -1,0 +1,405 @@
+name: Hybrid runtime scan (self-hosted)
+on:
+  workflow_dispatch:
+    inputs:
+      include_aws_scan:
+        description: "Run AWS runtime + IaC scanners on the self-hosted runner"
+        required: false
+        default: "true"
+      include_openstack_scan:
+        description: "Export OpenStack evidence and normalize it on the self-hosted runner"
+        required: false
+        default: "true"
+      publish_to_siem:
+        description: "Publish findings, triage, and remediation events to Elasticsearch"
+        required: false
+        default: "true"
+      dispatch_live_integrations:
+        description: "Send triage notifications to Jira/ServiceNow/Slack/Teams"
+        required: false
+        default: "false"
+      enable_runtime_remediation:
+        description: "Execute runtime remediation for AWS/OpenStack findings"
+        required: false
+        default: "false"
+      reconcile_m5_drift:
+        description: "Run the M5 Terraform drift reconcile flow"
+        required: false
+        default: "false"
+      simulate_m5_drift:
+        description: "Create the M5 drift before reconciling it"
+        required: false
+        default: "false"
+      generate_iac_pr:
+        description: "Generate the IaC remediation PR bundle"
+        required: false
+        default: "false"
+      force_rds_cutover:
+        description: "Force the M4 encrypted RDS replacement cutover"
+        required: false
+        default: "false"
+      delete_archived_rds:
+        description: "Delete the archived pre-cutover RDS instance after force cutover"
+        required: false
+        default: "false"
+      openrc_path:
+        description: "Path to the OpenStack RC file on the self-hosted runner"
+        required: false
+        default: "~/openrc"
+      project_prefix:
+        description: "Resource prefix shared across the AWS/OpenStack demo lab"
+        required: false
+        default: "threat-demo"
+      aws_region:
+        description: "AWS region for runtime scanners and remediation"
+        required: false
+        default: "ap-southeast-1"
+      pipeline_source:
+        description: "Pipeline source tag stored in Elasticsearch"
+        required: false
+        default: "github-self-hosted-hybrid"
+
+jobs:
+  hybrid-runtime-scan:
+    runs-on:
+      - self-hosted
+      - linux
+      - openstack
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    env:
+      ELASTICSEARCH_HOST: ${{ secrets.ELASTICSEARCH_HOST }}
+      ELASTICSEARCH_PORT: ${{ secrets.ELASTICSEARCH_PORT }}
+      ELASTICSEARCH_SCHEME: ${{ secrets.ELASTICSEARCH_SCHEME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Set up Terraform
+        if: github.event.inputs.reconcile_m5_drift == 'true'
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Install base dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Verify Python runtime dependencies
+        run: |
+          python -c "import dotenv, pydantic, elasticsearch; print('base runtime ok')"
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests
+
+      - name: Install Checkov and ScoutSuite into isolated venvs
+        run: |
+          python -m venv /tmp/checkov-venv
+          /tmp/checkov-venv/bin/pip install --upgrade pip
+          /tmp/checkov-venv/bin/pip install -r requirements-checkov.txt
+
+          python -m venv /tmp/scoutsuite-venv
+          /tmp/scoutsuite-venv/bin/pip install --upgrade pip
+          /tmp/scoutsuite-venv/bin/pip install -r requirements-scoutsuite.txt
+
+      - name: Install tfsec and Trivy on the runner PATH
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+          install -m 0755 ./bin/tfsec "$HOME/.local/bin/tfsec"
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install remediation toolchain
+        if: github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true'
+        run: |
+          python -m venv /tmp/remediation-venv
+          /tmp/remediation-venv/bin/pip install --upgrade pip
+          /tmp/remediation-venv/bin/pip install -r requirements-remediation.txt
+          curl -L -o "$HOME/.local/bin/opa" https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x "$HOME/.local/bin/opa"
+
+      - name: Verify OpenStack authentication
+        if: github.event.inputs.include_openstack_scan == 'true' || github.event.inputs.enable_runtime_remediation == 'true'
+        run: |
+          OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          test -f "${OPENRC_PATH/#\~/$HOME}"
+          set -a
+          source "${OPENRC_PATH/#\~/$HOME}"
+          set +a
+          openstack token issue -f value -c id >/dev/null
+
+      - name: Verify AWS authentication
+        if: github.event.inputs.include_aws_scan == 'true' || github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true'
+        env:
+          AWS_REGION: ${{ github.event.inputs.aws_region }}
+        run: |
+          aws sts get-caller-identity >/dev/null
+
+      - name: Run AWS scanners
+        if: github.event.inputs.include_aws_scan == 'true'
+        env:
+          AWS_REGION: ${{ github.event.inputs.aws_region }}
+        run: |
+          PYTHON_BIN="$(command -v python)"
+          export PATH="/tmp/checkov-venv/bin:/tmp/scoutsuite-venv/bin:$HOME/.local/bin:$PATH"
+          mkdir -p ./scan_results/aws
+          "$PYTHON_BIN" -m src.scanners.runner \
+            --scoutsuite \
+            --cloudsploit \
+            --checkov \
+            --tfsec \
+            --trivy \
+            --terraform-dir ./iac/terraform \
+            --trivy-scan-ref ./iac/terraform \
+            --output-dir ./scan_results/aws
+
+      - name: Export and normalize OpenStack findings
+        if: github.event.inputs.include_openstack_scan == 'true'
+        run: |
+          OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          set -a
+          source "${OPENRC_PATH/#\~/$HOME}"
+          set +a
+          PROJECT_PREFIX="${{ github.event.inputs.project_prefix }}" ./openstack/export_misconfig_openstack.sh
+          python -m src.openstack.findings \
+            --container-file ./reports/raw/openstack/live/container_public.json \
+            --sg-rules-file ./reports/raw/openstack/live/security_group_rules.json \
+            --role-assignments-file ./reports/raw/openstack/live/role_assignments.json \
+            --output ./scan_results/openstack_findings.json
+
+      - name: Merge AWS and OpenStack findings into one hybrid batch
+        run: |
+          MERGE_INPUTS=()
+          if [[ -f ./scan_results/aws/findings.json ]]; then
+            MERGE_INPUTS+=(./scan_results/aws/findings.json)
+          fi
+          if [[ -f ./scan_results/openstack_findings.json ]]; then
+            MERGE_INPUTS+=(./scan_results/openstack_findings.json)
+          fi
+          if [[ "${#MERGE_INPUTS[@]}" -eq 0 ]]; then
+            echo "No findings were generated by the selected scanners." >&2
+            exit 1
+          fi
+          python scripts/merge_json_collections.py \
+            --inputs "${MERGE_INPUTS[@]}" \
+            --output ./scan_results/hybrid_findings.json
+
+      - name: Triage hybrid findings
+        run: |
+          python -m src.triage.engine \
+            --input ./scan_results/hybrid_findings.json \
+            --output ./triage_results/hybrid_decisions.json
+
+      - name: Generate hybrid notification artifacts
+        env:
+          JIRA_URL: ${{ secrets.JIRA_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+          JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+          JIRA_ISSUE_TYPE: ${{ secrets.JIRA_ISSUE_TYPE }}
+          SERVICENOW_URL: ${{ secrets.SERVICENOW_URL }}
+          SERVICENOW_USER: ${{ secrets.SERVICENOW_USER }}
+          SERVICENOW_PASSWORD: ${{ secrets.SERVICENOW_PASSWORD }}
+          SERVICENOW_TABLE: ${{ secrets.SERVICENOW_TABLE }}
+          SERVICENOW_CATEGORY: ${{ secrets.SERVICENOW_CATEGORY }}
+          SERVICENOW_SUBCATEGORY: ${{ secrets.SERVICENOW_SUBCATEGORY }}
+          SERVICENOW_ASSIGNMENT_GROUP_SYS_ID: ${{ secrets.SERVICENOW_ASSIGNMENT_GROUP_SYS_ID }}
+          SERVICENOW_CALLER_SYS_ID: ${{ secrets.SERVICENOW_CALLER_SYS_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: |
+          NOTIFICATION_ARGS=()
+          if [[ "${{ github.event.inputs.dispatch_live_integrations }}" == "true" ]]; then
+            NOTIFICATION_ARGS+=(--dispatch-live --fail-on-dispatch-error)
+          fi
+          python -m src.triage.notifications \
+            --findings ./scan_results/hybrid_findings.json \
+            --decisions ./triage_results/hybrid_decisions.json \
+            --output-dir ./artifacts/triage_notifications \
+            "${NOTIFICATION_ARGS[@]}"
+
+      - name: Verify Elasticsearch availability
+        if: github.event.inputs.publish_to_siem == 'true'
+        run: |
+          ES_HOST="${ELASTICSEARCH_HOST:-localhost}"
+          ES_PORT="${ELASTICSEARCH_PORT:-9200}"
+          ES_SCHEME="${ELASTICSEARCH_SCHEME:-http}"
+          curl -fsS "${ES_SCHEME}://${ES_HOST}:${ES_PORT}" >/dev/null
+
+      - name: Publish hybrid findings and triage to Elasticsearch
+        if: github.event.inputs.publish_to_siem == 'true'
+        run: |
+          python -m src.siem.publisher \
+            --findings ./scan_results/hybrid_findings.json \
+            --decisions ./triage_results/hybrid_decisions.json \
+            --pipeline-source "${{ github.event.inputs.pipeline_source }}" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}"
+
+      - name: Execute AWS runtime remediation
+        if: github.event.inputs.enable_runtime_remediation == 'true' && github.event.inputs.include_aws_scan == 'true'
+        env:
+          AWS_REGION: ${{ github.event.inputs.aws_region }}
+        run: |
+          export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
+          RDS_ARGS=()
+          if [[ "${{ github.event.inputs.force_rds_cutover }}" == "true" ]]; then
+            RDS_ARGS+=(--force-rds-cutover)
+          fi
+          if [[ "${{ github.event.inputs.delete_archived_rds }}" == "true" ]]; then
+            RDS_ARGS+=(--delete-archived-rds)
+          fi
+          python -m src.remediation.aws_runtime_executor \
+            --findings ./scan_results/hybrid_findings.json \
+            --decisions ./triage_results/hybrid_decisions.json \
+            --region "${AWS_REGION}" \
+            --project-prefix "${{ github.event.inputs.project_prefix }}" \
+            --approve-all-manual \
+            --execute \
+            --pipeline-source "${{ github.event.inputs.pipeline_source }}-aws-runtime" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}" \
+            "${RDS_ARGS[@]}"
+
+      - name: Execute OpenStack runtime remediation
+        if: github.event.inputs.enable_runtime_remediation == 'true' && github.event.inputs.include_openstack_scan == 'true'
+        run: |
+          OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          set -a
+          source "${OPENRC_PATH/#\~/$HOME}"
+          set +a
+          python -m src.remediation.runtime_executor \
+            --findings ./scan_results/hybrid_findings.json \
+            --decisions ./triage_results/hybrid_decisions.json \
+            --provider openstack \
+            --approve-all-manual \
+            --execute \
+            --output-events ./artifacts/remediation/openstack_runtime_events.json \
+            --output-findings-after ./artifacts/remediation/openstack_findings_after_runtime.json \
+            --pipeline-source "${{ github.event.inputs.pipeline_source }}-openstack-runtime" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}"
+
+      - name: Reconcile M5 drift
+        if: github.event.inputs.reconcile_m5_drift == 'true'
+        env:
+          AWS_REGION: ${{ github.event.inputs.aws_region }}
+        run: |
+          DRIFT_ARGS=()
+          if [[ "${{ github.event.inputs.simulate_m5_drift }}" == "true" ]]; then
+            DRIFT_ARGS+=(--simulate-drift)
+          fi
+          python -m src.remediation.drift_reconcile \
+            --terraform-dir ./iac/terraform \
+            --region "${AWS_REGION}" \
+            --project-prefix "${{ github.event.inputs.project_prefix }}" \
+            --execute \
+            --pipeline-source "${{ github.event.inputs.pipeline_source }}-m5-drift" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}" \
+            --output-dir ./artifacts/drift/m5 \
+            "${DRIFT_ARGS[@]}"
+
+      - name: Generate IaC remediation PR bundle
+        if: github.event.inputs.generate_iac_pr == 'true'
+        run: |
+          python -m src.remediation.iac_pr_prepare \
+            --findings ./scan_results/hybrid_findings.json \
+            --decisions ./triage_results/hybrid_decisions.json \
+            --terraform-dir ./iac/terraform \
+            --output-dir ./artifacts/iac_pr \
+            --run-label self_hosted_bundle \
+            --pipeline-source "${{ github.event.inputs.pipeline_source }}-iac-pr" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}"
+
+      - name: Build remediation metrics
+        if: github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true'
+        run: |
+          REMEDIATION_ARGS=()
+          if [[ -f ./artifacts/remediation/aws_runtime_events.json ]]; then
+            REMEDIATION_ARGS+=(--remediation-events ./artifacts/remediation/aws_runtime_events.json)
+          fi
+          if [[ -f ./artifacts/remediation/openstack_runtime_events.json ]]; then
+            REMEDIATION_ARGS+=(--remediation-events ./artifacts/remediation/openstack_runtime_events.json)
+          fi
+          if [[ -f ./artifacts/drift/m5/reconcile_events.json ]]; then
+            REMEDIATION_ARGS+=(--remediation-events ./artifacts/drift/m5/reconcile_events.json)
+          fi
+          if [[ -f ./artifacts/iac_pr/self_hosted_bundle/iac_pr_events.json ]]; then
+            REMEDIATION_ARGS+=(--remediation-events ./artifacts/iac_pr/self_hosted_bundle/iac_pr_events.json)
+          fi
+          python -m src.remediation.metrics \
+            --findings ./scan_results/hybrid_findings.json \
+            --decisions ./triage_results/hybrid_decisions.json \
+            --output ./artifacts/remediation/hybrid_metrics.json \
+            --pipeline-source "${{ github.event.inputs.pipeline_source }}-metrics" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}" \
+            "${REMEDIATION_ARGS[@]}"
+
+      - name: Publish remediation events and metrics
+        if: github.event.inputs.publish_to_siem == 'true' && (github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true')
+        run: |
+          PUBLISH_ARGS=()
+          if [[ -f ./artifacts/remediation/aws_runtime_events.json ]]; then
+            PUBLISH_ARGS+=(--remediation-events ./artifacts/remediation/aws_runtime_events.json)
+          fi
+          if [[ -f ./artifacts/remediation/openstack_runtime_events.json ]]; then
+            PUBLISH_ARGS+=(--remediation-events ./artifacts/remediation/openstack_runtime_events.json)
+          fi
+          if [[ -f ./artifacts/drift/m5/reconcile_events.json ]]; then
+            PUBLISH_ARGS+=(--remediation-events ./artifacts/drift/m5/reconcile_events.json)
+          fi
+          if [[ -f ./artifacts/remediation/hybrid_metrics.json ]]; then
+            PUBLISH_ARGS+=(--metrics ./artifacts/remediation/hybrid_metrics.json)
+          fi
+          python -m src.siem.publisher \
+            --pipeline-source "${{ github.event.inputs.pipeline_source }}-remediation" \
+            --branch "${GITHUB_REF_NAME}" \
+            --commit-sha "${GITHUB_SHA}" \
+            "${PUBLISH_ARGS[@]}"
+
+      - name: Upload hybrid pipeline artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-runtime-artifacts
+          path: |
+            scan_results/
+            triage_results/
+            artifacts/triage_notifications/
+            artifacts/remediation/
+            artifacts/iac_pr/
+            artifacts/drift/
+
+      - name: Write workflow summary
+        run: |
+          {
+            echo "## Hybrid runtime scan summary"
+            echo ""
+            echo "- Runner labels: \`self-hosted, linux, openstack\`"
+            echo "- Pipeline source: \`${{ github.event.inputs.pipeline_source }}\`"
+            echo "- AWS scan enabled: \`${{ github.event.inputs.include_aws_scan }}\`"
+            echo "- OpenStack scan enabled: \`${{ github.event.inputs.include_openstack_scan }}\`"
+            echo "- Publish to SIEM: \`${{ github.event.inputs.publish_to_siem }}\`"
+            echo "- Runtime remediation: \`${{ github.event.inputs.enable_runtime_remediation }}\`"
+            echo "- M5 drift reconcile: \`${{ github.event.inputs.reconcile_m5_drift }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
