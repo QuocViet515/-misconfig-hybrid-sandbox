@@ -193,7 +193,7 @@ jobs:
           set -a
           source "${OPENRC_PATH/#\~/$HOME}"
           set +a
-          PROJECT_PREFIX="${{ github.event.inputs.project_prefix }}" ./openstack/export_misconfig_openstack.sh
+          PROJECT_PREFIX="${{ github.event.inputs.project_prefix }}" bash ./openstack/export_misconfig_openstack.sh
           python -m src.openstack.findings \
             --container-file ./reports/raw/openstack/live/container_public.json \
             --sg-rules-file ./reports/raw/openstack/live/security_group_rules.json \
