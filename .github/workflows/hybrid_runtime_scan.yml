@@ -60,7 +60,7 @@ on:
       openrc_path:
         description: "Path to the OpenStack RC file on the self-hosted runner"
         required: false
-        default: "~/openrc"
+        default: "/etc/kolla/admin-openrc.sh"
       openstack_activate_path:
         description: "Path to the OpenStack CLI/Kolla virtualenv activation script on the self-hosted runner"
         required: false
@@ -104,7 +104,7 @@ jobs:
       CFG_GENERATE_IAC_PR: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.generate_iac_pr || 'false' }}
       CFG_FORCE_RDS_CUTOVER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rds_cutover || 'false' }}
       CFG_DELETE_ARCHIVED_RDS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.delete_archived_rds || 'false' }}
-      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '~/openrc' }}
+      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
       CFG_OPENSTACK_ACTIVATE_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
       CFG_PROJECT_PREFIX: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.project_prefix || 'threat-demo' }}
       CFG_AWS_REGION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aws_region || 'ap-southeast-1' }}
