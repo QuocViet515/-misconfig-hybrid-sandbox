@@ -67,7 +67,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TDINH }}
+          role-to-assume: ${{ secrets.AWS_ROLE_QVIET }}
           aws-region: us-east-1
 
       - name: Install Base Dependencies
