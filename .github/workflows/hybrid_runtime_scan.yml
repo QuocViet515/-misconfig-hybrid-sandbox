@@ -48,7 +48,7 @@ on:
       generate_iac_pr:
         description: "Generate the IaC remediation PR bundle"
         required: false
-        default: "false"
+        default: "true"
       force_rds_cutover:
         description: "Force the M4 encrypted RDS replacement cutover"
         required: false
