@@ -126,7 +126,7 @@ Nếu muốn dispatch thật tới JIRA / ServiceNow / Slack / Teams thay vì ch
   --fail-on-dispatch-error
 ```
 
-Workflow GitHub `scan_and_remediate` chạy bộ scanner rộng hơn:
+Workflow GitHub `hybrid_runtime_scan` chạy bộ scanner rộng hơn:
 
 - `ScoutSuite`
 - `CloudSploit`

@@ -33,9 +33,9 @@ python3 -m venv .venv
 
 ## 4) CI coverage
 
-Hai workflow chính đều chạy `pytest` trước scanner/remediation:
+Hai workflow chính hiện chạy `pytest` trước scanner/remediation:
 
-- `.github/workflows/scan_and_remediate.yml`
+- `.github/workflows/hybrid_runtime_scan.yml`
 - `.github/workflows/iac_scan.yml`
 
 Điều này giúp fail sớm nếu:

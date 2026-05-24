@@ -30,7 +30,7 @@ Checklist này gom các artifact đã có trong repo để chốt phần `testin
 - `docs/TESTING.md`
 - kết quả `pytest tests`
 - log GitHub Actions của:
-  - `scan_and_remediate`
+  - `hybrid_runtime_scan`
   - `iac_scan`
 
 ## 5) Manual deliverables còn phải tự nộp

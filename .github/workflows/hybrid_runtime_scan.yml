@@ -1,5 +1,16 @@
 name: Hybrid runtime scan (self-hosted)
 on:
+  push:
+    branches:
+      - main
+      - feat/normalize
+    paths:
+      - 'iac/terraform/**'
+      - 'openstack/**'
+      - 'src/**'
+      - 'ansible/**'
+      - 'policy/**'
+      - '.github/workflows/hybrid_runtime_scan.yml'
   workflow_dispatch:
     inputs:
       include_aws_scan:
@@ -82,6 +93,22 @@ jobs:
       ELASTICSEARCH_HOST: ${{ secrets.ELASTICSEARCH_HOST }}
       ELASTICSEARCH_PORT: ${{ secrets.ELASTICSEARCH_PORT }}
       ELASTICSEARCH_SCHEME: ${{ secrets.ELASTICSEARCH_SCHEME }}
+      CFG_INCLUDE_AWS_SCAN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_aws_scan || 'true' }}
+      CFG_INCLUDE_OPENSTACK_SCAN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_scan || 'true' }}
+      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_object_storage || 'false' }}
+      CFG_PUBLISH_TO_SIEM: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_siem || 'true' }}
+      CFG_DISPATCH_LIVE_INTEGRATIONS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dispatch_live_integrations || 'false' }}
+      CFG_ENABLE_RUNTIME_REMEDIATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.enable_runtime_remediation || 'false' }}
+      CFG_RECONCILE_M5_DRIFT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reconcile_m5_drift || 'false' }}
+      CFG_SIMULATE_M5_DRIFT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.simulate_m5_drift || 'false' }}
+      CFG_GENERATE_IAC_PR: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.generate_iac_pr || 'false' }}
+      CFG_FORCE_RDS_CUTOVER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rds_cutover || 'false' }}
+      CFG_DELETE_ARCHIVED_RDS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.delete_archived_rds || 'false' }}
+      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '~/openrc' }}
+      CFG_OPENSTACK_ACTIVATE_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
+      CFG_PROJECT_PREFIX: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.project_prefix || 'threat-demo' }}
+      CFG_AWS_REGION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aws_region || 'ap-southeast-1' }}
+      CFG_PIPELINE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pipeline_source || 'github-self-hosted-hybrid' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -96,7 +123,7 @@ jobs:
           node-version: "18"
 
       - name: Set up Terraform
-        if: github.event.inputs.reconcile_m5_drift == 'true'
+        if: env.CFG_RECONCILE_M5_DRIFT == 'true'
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: "1.5.0"
@@ -137,7 +164,7 @@ jobs:
           "$TFSEC_BIN" --version
 
       - name: Install remediation toolchain
-        if: github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true'
+        if: env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true' || env.CFG_RECONCILE_M5_DRIFT == 'true' || env.CFG_GENERATE_IAC_PR == 'true'
         run: |
           python -m venv /tmp/remediation-venv
           /tmp/remediation-venv/bin/pip install --upgrade pip
@@ -146,10 +173,10 @@ jobs:
           chmod +x "$HOME/.local/bin/opa"
 
       - name: Verify OpenStack authentication
-        if: github.event.inputs.include_openstack_scan == 'true' || github.event.inputs.enable_runtime_remediation == 'true'
+        if: env.CFG_INCLUDE_OPENSTACK_SCAN == 'true' || env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true'
         run: |
-          OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
-          OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
+          OPENRC_PATH="${CFG_OPENRC_PATH}"
           if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
             test -f "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
             source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
@@ -161,16 +188,16 @@ jobs:
           openstack token issue -f value -c id >/dev/null
 
       - name: Verify AWS authentication
-        if: github.event.inputs.include_aws_scan == 'true' || github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true'
+        if: env.CFG_INCLUDE_AWS_SCAN == 'true' || env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true' || env.CFG_RECONCILE_M5_DRIFT == 'true'
         env:
-          AWS_REGION: ${{ github.event.inputs.aws_region }}
+          AWS_REGION: ${{ env.CFG_AWS_REGION }}
         run: |
           aws sts get-caller-identity >/dev/null
 
       - name: Run AWS scanners
-        if: github.event.inputs.include_aws_scan == 'true'
+        if: env.CFG_INCLUDE_AWS_SCAN == 'true'
         env:
-          AWS_REGION: ${{ github.event.inputs.aws_region }}
+          AWS_REGION: ${{ env.CFG_AWS_REGION }}
         run: |
           PYTHON_BIN="$(command -v python)"
           export PATH="/tmp/checkov-venv/bin:/tmp/scoutsuite-venv/bin:$HOME/.local/bin:$PATH"
@@ -186,11 +213,11 @@ jobs:
             --output-dir ./scan_results/aws
 
       - name: Export and normalize OpenStack findings
-        if: github.event.inputs.include_openstack_scan == 'true'
+        if: env.CFG_INCLUDE_OPENSTACK_SCAN == 'true'
         run: |
           PYTHON_BIN="$(command -v python)"
-          OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
-          OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
+          OPENRC_PATH="${CFG_OPENRC_PATH}"
           if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
             test -f "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
             source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
@@ -198,8 +225,8 @@ jobs:
           set -a
           source "${OPENRC_PATH/#\~/$HOME}"
           set +a
-          PROJECT_PREFIX="${{ github.event.inputs.project_prefix }}" \
-          OPENSTACK_INCLUDE_OBJECT_STORAGE="${{ github.event.inputs.include_openstack_object_storage }}" \
+          PROJECT_PREFIX="${CFG_PROJECT_PREFIX}" \
+          OPENSTACK_INCLUDE_OBJECT_STORAGE="${CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE}" \
             bash ./openstack/export_misconfig_openstack.sh
           FINDING_ARGS=()
           if [[ -f ./reports/raw/openstack/live/container_public.json ]]; then
@@ -259,7 +286,7 @@ jobs:
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         run: |
           NOTIFICATION_ARGS=()
-          if [[ "${{ github.event.inputs.dispatch_live_integrations }}" == "true" ]]; then
+          if [[ "${CFG_DISPATCH_LIVE_INTEGRATIONS}" == "true" ]]; then
             NOTIFICATION_ARGS+=(--dispatch-live --fail-on-dispatch-error)
           fi
           python -m src.triage.notifications \
@@ -269,7 +296,7 @@ jobs:
             "${NOTIFICATION_ARGS[@]}"
 
       - name: Verify Elasticsearch availability
-        if: github.event.inputs.publish_to_siem == 'true'
+        if: env.CFG_PUBLISH_TO_SIEM == 'true'
         run: |
           ES_HOST="${ELASTICSEARCH_HOST:-localhost}"
           ES_PORT="${ELASTICSEARCH_PORT:-9200}"
@@ -277,47 +304,47 @@ jobs:
           curl -fsS "${ES_SCHEME}://${ES_HOST}:${ES_PORT}" >/dev/null
 
       - name: Publish hybrid findings and triage to Elasticsearch
-        if: github.event.inputs.publish_to_siem == 'true'
+        if: env.CFG_PUBLISH_TO_SIEM == 'true'
         run: |
           python -m src.siem.publisher \
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
-            --pipeline-source "${{ github.event.inputs.pipeline_source }}" \
+            --pipeline-source "${CFG_PIPELINE_SOURCE}" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}"
 
       - name: Execute AWS runtime remediation
-        if: github.event.inputs.enable_runtime_remediation == 'true' && github.event.inputs.include_aws_scan == 'true'
+        if: env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true' && env.CFG_INCLUDE_AWS_SCAN == 'true'
         env:
-          AWS_REGION: ${{ github.event.inputs.aws_region }}
+          AWS_REGION: ${{ env.CFG_AWS_REGION }}
         run: |
           PYTHON_BIN="$(command -v python)"
           export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
           RDS_ARGS=()
-          if [[ "${{ github.event.inputs.force_rds_cutover }}" == "true" ]]; then
+          if [[ "${CFG_FORCE_RDS_CUTOVER}" == "true" ]]; then
             RDS_ARGS+=(--force-rds-cutover)
           fi
-          if [[ "${{ github.event.inputs.delete_archived_rds }}" == "true" ]]; then
+          if [[ "${CFG_DELETE_ARCHIVED_RDS}" == "true" ]]; then
             RDS_ARGS+=(--delete-archived-rds)
           fi
           "$PYTHON_BIN" -m src.remediation.aws_runtime_executor \
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
             --region "${AWS_REGION}" \
-            --project-prefix "${{ github.event.inputs.project_prefix }}" \
+            --project-prefix "${CFG_PROJECT_PREFIX}" \
             --approve-all-manual \
             --execute \
-            --pipeline-source "${{ github.event.inputs.pipeline_source }}-aws-runtime" \
+            --pipeline-source "${CFG_PIPELINE_SOURCE}-aws-runtime" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}" \
             "${RDS_ARGS[@]}"
 
       - name: Execute OpenStack runtime remediation
-        if: github.event.inputs.enable_runtime_remediation == 'true' && github.event.inputs.include_openstack_scan == 'true'
+        if: env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true' && env.CFG_INCLUDE_OPENSTACK_SCAN == 'true'
         run: |
           PYTHON_BIN="$(command -v python)"
-          OPENSTACK_ACTIVATE_PATH="${{ github.event.inputs.openstack_activate_path }}"
-          OPENRC_PATH="${{ github.event.inputs.openrc_path }}"
+          OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
+          OPENRC_PATH="${CFG_OPENRC_PATH}"
           if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
             test -f "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
             source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
@@ -333,34 +360,34 @@ jobs:
             --execute \
             --output-events ./artifacts/remediation/openstack_runtime_events.json \
             --output-findings-after ./artifacts/remediation/openstack_findings_after_runtime.json \
-            --pipeline-source "${{ github.event.inputs.pipeline_source }}-openstack-runtime" \
+            --pipeline-source "${CFG_PIPELINE_SOURCE}-openstack-runtime" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}"
 
       - name: Reconcile M5 drift
-        if: github.event.inputs.reconcile_m5_drift == 'true'
+        if: env.CFG_RECONCILE_M5_DRIFT == 'true'
         env:
-          AWS_REGION: ${{ github.event.inputs.aws_region }}
+          AWS_REGION: ${{ env.CFG_AWS_REGION }}
         run: |
           PYTHON_BIN="$(command -v python)"
           export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
           DRIFT_ARGS=()
-          if [[ "${{ github.event.inputs.simulate_m5_drift }}" == "true" ]]; then
+          if [[ "${CFG_SIMULATE_M5_DRIFT}" == "true" ]]; then
             DRIFT_ARGS+=(--simulate-drift)
           fi
           "$PYTHON_BIN" -m src.remediation.drift_reconcile \
             --terraform-dir ./iac/terraform \
             --region "${AWS_REGION}" \
-            --project-prefix "${{ github.event.inputs.project_prefix }}" \
+            --project-prefix "${CFG_PROJECT_PREFIX}" \
             --execute \
-            --pipeline-source "${{ github.event.inputs.pipeline_source }}-m5-drift" \
+            --pipeline-source "${CFG_PIPELINE_SOURCE}-m5-drift" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}" \
             --output-dir ./artifacts/drift/m5 \
             "${DRIFT_ARGS[@]}"
 
       - name: Generate IaC remediation PR bundle
-        if: github.event.inputs.generate_iac_pr == 'true'
+        if: env.CFG_GENERATE_IAC_PR == 'true'
         run: |
           PYTHON_BIN="$(command -v python)"
           export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
@@ -370,12 +397,12 @@ jobs:
             --terraform-dir ./iac/terraform \
             --output-dir ./artifacts/iac_pr \
             --run-label self_hosted_bundle \
-            --pipeline-source "${{ github.event.inputs.pipeline_source }}-iac-pr" \
+            --pipeline-source "${CFG_PIPELINE_SOURCE}-iac-pr" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}"
 
       - name: Build remediation metrics
-        if: github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true'
+        if: env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true' || env.CFG_RECONCILE_M5_DRIFT == 'true' || env.CFG_GENERATE_IAC_PR == 'true'
         run: |
           PYTHON_BIN="$(command -v python)"
           REMEDIATION_ARGS=()
@@ -395,13 +422,13 @@ jobs:
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
             --output ./artifacts/remediation/hybrid_metrics.json \
-            --pipeline-source "${{ github.event.inputs.pipeline_source }}-metrics" \
+            --pipeline-source "${CFG_PIPELINE_SOURCE}-metrics" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}" \
             "${REMEDIATION_ARGS[@]}"
 
       - name: Publish remediation events and metrics
-        if: github.event.inputs.publish_to_siem == 'true' && (github.event.inputs.enable_runtime_remediation == 'true' || github.event.inputs.reconcile_m5_drift == 'true' || github.event.inputs.generate_iac_pr == 'true')
+        if: env.CFG_PUBLISH_TO_SIEM == 'true' && (env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true' || env.CFG_RECONCILE_M5_DRIFT == 'true' || env.CFG_GENERATE_IAC_PR == 'true')
         run: |
           PYTHON_BIN="$(command -v python)"
           PUBLISH_ARGS=()
@@ -418,7 +445,7 @@ jobs:
             PUBLISH_ARGS+=(--metrics ./artifacts/remediation/hybrid_metrics.json)
           fi
           "$PYTHON_BIN" -m src.siem.publisher \
-            --pipeline-source "${{ github.event.inputs.pipeline_source }}-remediation" \
+            --pipeline-source "${CFG_PIPELINE_SOURCE}-remediation" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}" \
             "${PUBLISH_ARGS[@]}"
@@ -441,13 +468,14 @@ jobs:
             echo "## Hybrid runtime scan summary"
             echo ""
             echo "- Runner labels: \`self-hosted, linux, openstack\`"
-            echo "- Pipeline source: \`${{ github.event.inputs.pipeline_source }}\`"
-            echo "- AWS scan enabled: \`${{ github.event.inputs.include_aws_scan }}\`"
-            echo "- OpenStack scan enabled: \`${{ github.event.inputs.include_openstack_scan }}\`"
-            echo "- OpenStack object storage enabled: \`${{ github.event.inputs.include_openstack_object_storage }}\`"
-            echo "- OpenStack activate path: \`${{ github.event.inputs.openstack_activate_path }}\`"
-            echo "- OpenStack RC path: \`${{ github.event.inputs.openrc_path }}\`"
-            echo "- Publish to SIEM: \`${{ github.event.inputs.publish_to_siem }}\`"
-            echo "- Runtime remediation: \`${{ github.event.inputs.enable_runtime_remediation }}\`"
-            echo "- M5 drift reconcile: \`${{ github.event.inputs.reconcile_m5_drift }}\`"
+            echo "- Trigger: \`${{ github.event_name }}\`"
+            echo "- Pipeline source: \`${CFG_PIPELINE_SOURCE}\`"
+            echo "- AWS scan enabled: \`${CFG_INCLUDE_AWS_SCAN}\`"
+            echo "- OpenStack scan enabled: \`${CFG_INCLUDE_OPENSTACK_SCAN}\`"
+            echo "- OpenStack object storage enabled: \`${CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE}\`"
+            echo "- OpenStack activate path: \`${CFG_OPENSTACK_ACTIVATE_PATH}\`"
+            echo "- OpenStack RC path: \`${CFG_OPENRC_PATH}\`"
+            echo "- Publish to SIEM: \`${CFG_PUBLISH_TO_SIEM}\`"
+            echo "- Runtime remediation: \`${CFG_ENABLE_RUNTIME_REMEDIATION}\`"
+            echo "- M5 drift reconcile: \`${CFG_RECONCILE_M5_DRIFT}\`"
           } >> "$GITHUB_STEP_SUMMARY"

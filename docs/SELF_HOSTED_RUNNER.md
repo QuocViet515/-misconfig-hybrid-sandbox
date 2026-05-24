@@ -21,14 +21,13 @@ Nhưng nó **không tự nhìn thấy OpenStack lab** nếu lab chỉ reachable 
 - private subnet
 - all-in-one control plane nội bộ
 
-Vì vậy phần `hybrid cloud` đúng chuẩn MD nên chạy như sau:
+Vì vậy phần `hybrid cloud` đúng chuẩn MD nên chạy qua một workflow duy nhất:
 
-- `scan_and_remediate.yml`: tốt cho `AWS + IaC`
-- `hybrid_runtime_scan.yml`: tốt cho `AWS + OpenStack + IaC` trên runner nội bộ
+- `hybrid_runtime_scan.yml`: `AWS + OpenStack + IaC` trên runner nội bộ
 
 ## 2) Workflow đã thêm trong repo
 
-Workflow mới:
+Workflow chính:
 
 - [.github/workflows/hybrid_runtime_scan.yml](/home/deployer/Desktop/Misconfig_AutoRemediate_Project/.github/workflows/hybrid_runtime_scan.yml)
 
