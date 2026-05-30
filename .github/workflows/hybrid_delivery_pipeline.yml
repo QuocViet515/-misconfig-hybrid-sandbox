@@ -82,14 +82,72 @@ on:
         default: "github-self-hosted-hybrid"
 
 jobs:
+  resolve-config:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_aws_stack: ${{ steps.resolve.outputs.deploy_aws_stack }}
+      deploy_openstack_stack: ${{ steps.resolve.outputs.deploy_openstack_stack }}
+      include_aws_scan: ${{ steps.resolve.outputs.include_aws_scan }}
+      include_openstack_scan: ${{ steps.resolve.outputs.include_openstack_scan }}
+      include_openstack_object_storage: ${{ steps.resolve.outputs.include_openstack_object_storage }}
+      publish_to_siem: ${{ steps.resolve.outputs.publish_to_siem }}
+      dispatch_live_integrations: ${{ steps.resolve.outputs.dispatch_live_integrations }}
+      enable_runtime_remediation: ${{ steps.resolve.outputs.enable_runtime_remediation }}
+      generate_iac_pr: ${{ steps.resolve.outputs.generate_iac_pr }}
+      force_rds_cutover: ${{ steps.resolve.outputs.force_rds_cutover }}
+      delete_archived_rds: ${{ steps.resolve.outputs.delete_archived_rds }}
+      openrc_path: ${{ steps.resolve.outputs.openrc_path }}
+      openstack_activate_path: ${{ steps.resolve.outputs.openstack_activate_path }}
+      project_prefix: ${{ steps.resolve.outputs.project_prefix }}
+      aws_region: ${{ steps.resolve.outputs.aws_region }}
+      pipeline_source: ${{ steps.resolve.outputs.pipeline_source }}
+    steps:
+      - id: resolve
+        env:
+          GITHUB_EVENT_NAME_VALUE: ${{ github.event_name }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          with open(os.environ["GITHUB_EVENT_PATH"], "r", encoding="utf-8") as handle:
+              event = json.load(handle)
+
+          inputs = event.get("inputs", {}) if os.environ["GITHUB_EVENT_NAME_VALUE"] == "workflow_dispatch" else {}
+
+          defaults = {
+              "deploy_aws_stack": "true",
+              "deploy_openstack_stack": "true",
+              "include_aws_scan": "true",
+              "include_openstack_scan": "true",
+              "include_openstack_object_storage": "false",
+              "publish_to_siem": "true",
+              "dispatch_live_integrations": "false",
+              "enable_runtime_remediation": "true",
+              "generate_iac_pr": "true",
+              "force_rds_cutover": "false",
+              "delete_archived_rds": "false",
+              "openrc_path": "/etc/kolla/admin-openrc.sh",
+              "openstack_activate_path": "~/kolla-venv/bin/activate",
+              "project_prefix": "threat-demo",
+              "aws_region": "ap-southeast-1",
+              "pipeline_source": "github-self-hosted-hybrid",
+          }
+
+          for key, default in defaults.items():
+              value = inputs.get(key, default) or default
+              print(f"{key}={value}")
+          PY
+
   pre-deployment-checks:
+    needs: resolve-config
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read
     env:
-      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_aws_stack || 'true' }}
-      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_openstack_stack || 'true' }}
+      CFG_DEPLOY_AWS_STACK: ${{ needs.resolve-config.outputs.deploy_aws_stack }}
+      CFG_DEPLOY_OPENSTACK_STACK: ${{ needs.resolve-config.outputs.deploy_openstack_stack }}
     steps:
       - uses: actions/checkout@v4
 
@@ -233,7 +291,9 @@ jobs:
           echo "Deployment gate satisfied for hybrid-cloud-deploy."
 
   deploy-infrastructure:
-    needs: approval-gate
+    needs:
+      - approval-gate
+      - resolve-config
     runs-on:
       - self-hosted
       - linux
@@ -242,13 +302,13 @@ jobs:
       contents: read
       id-token: write
     env:
-      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_aws_stack || 'true' }}
-      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_openstack_stack || 'true' }}
-      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_object_storage || 'false' }}
-      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
-      CFG_OPENSTACK_ACTIVATE_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
-      CFG_PROJECT_PREFIX: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.project_prefix || 'threat-demo' }}
-      CFG_AWS_REGION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aws_region || 'ap-southeast-1' }}
+      CFG_DEPLOY_AWS_STACK: ${{ needs.resolve-config.outputs.deploy_aws_stack }}
+      CFG_DEPLOY_OPENSTACK_STACK: ${{ needs.resolve-config.outputs.deploy_openstack_stack }}
+      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ needs.resolve-config.outputs.include_openstack_object_storage }}
+      CFG_OPENRC_PATH: ${{ needs.resolve-config.outputs.openrc_path }}
+      CFG_OPENSTACK_ACTIVATE_PATH: ${{ needs.resolve-config.outputs.openstack_activate_path }}
+      CFG_PROJECT_PREFIX: ${{ needs.resolve-config.outputs.project_prefix }}
+      CFG_AWS_REGION: ${{ needs.resolve-config.outputs.aws_region }}
       CFG_OPENSTACK_DEMO_PASSWORD: "ChangeMe123!"
       TFSTATE_ROOT: "~/.misconfig-hybrid-sandbox/tfstate"
     steps:
@@ -341,23 +401,25 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   post-deployment-scan-remediate:
-    needs: deploy-infrastructure
+    needs:
+      - deploy-infrastructure
+      - resolve-config
     uses: ./.github/workflows/hybrid_runtime_scan.yml
     with:
-      include_aws_scan: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_aws_scan || 'true' }}
-      include_openstack_scan: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_scan || 'true' }}
-      include_openstack_object_storage: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_object_storage || 'false' }}
-      publish_to_siem: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_siem || 'true' }}
-      dispatch_live_integrations: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dispatch_live_integrations || 'false' }}
-      enable_runtime_remediation: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.enable_runtime_remediation || 'true' }}
+      include_aws_scan: ${{ needs.resolve-config.outputs.include_aws_scan }}
+      include_openstack_scan: ${{ needs.resolve-config.outputs.include_openstack_scan }}
+      include_openstack_object_storage: ${{ needs.resolve-config.outputs.include_openstack_object_storage }}
+      publish_to_siem: ${{ needs.resolve-config.outputs.publish_to_siem }}
+      dispatch_live_integrations: ${{ needs.resolve-config.outputs.dispatch_live_integrations }}
+      enable_runtime_remediation: ${{ needs.resolve-config.outputs.enable_runtime_remediation }}
       reconcile_m5_drift: "false"
       simulate_m5_drift: "false"
-      generate_iac_pr: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.generate_iac_pr || 'true' }}
-      force_rds_cutover: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rds_cutover || 'false' }}
-      delete_archived_rds: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.delete_archived_rds || 'false' }}
-      openrc_path: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
-      openstack_activate_path: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
-      project_prefix: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.project_prefix || 'threat-demo' }}
-      aws_region: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aws_region || 'ap-southeast-1' }}
-      pipeline_source: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pipeline_source || 'github-self-hosted-hybrid' }}
+      generate_iac_pr: ${{ needs.resolve-config.outputs.generate_iac_pr }}
+      force_rds_cutover: ${{ needs.resolve-config.outputs.force_rds_cutover }}
+      delete_archived_rds: ${{ needs.resolve-config.outputs.delete_archived_rds }}
+      openrc_path: ${{ needs.resolve-config.outputs.openrc_path }}
+      openstack_activate_path: ${{ needs.resolve-config.outputs.openstack_activate_path }}
+      project_prefix: ${{ needs.resolve-config.outputs.project_prefix }}
+      aws_region: ${{ needs.resolve-config.outputs.aws_region }}
+      pipeline_source: ${{ needs.resolve-config.outputs.pipeline_source }}
     secrets: inherit
