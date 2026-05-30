@@ -223,3 +223,5 @@ resource "aws_ecs_task_definition" "m6_vulnerable_task" {
     Risk     = "CRITICAL"
   }
 }
+
+# demo trigger for PR precheck
