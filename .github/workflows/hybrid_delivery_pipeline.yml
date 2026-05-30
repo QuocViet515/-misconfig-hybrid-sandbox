@@ -88,8 +88,8 @@ jobs:
       contents: read
       actions: read
     env:
-      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_aws_stack || 'true' }}
-      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_openstack_stack || 'true' }}
+      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_aws_stack || 'true' }}
+      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_openstack_stack || 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -242,13 +242,13 @@ jobs:
       contents: read
       id-token: write
     env:
-      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_aws_stack || 'true' }}
-      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_openstack_stack || 'true' }}
-      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.include_openstack_object_storage || 'false' }}
-      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
-      CFG_OPENSTACK_ACTIVATE_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
-      CFG_PROJECT_PREFIX: ${{ github.event_name == 'workflow_dispatch' && inputs.project_prefix || 'threat-demo' }}
-      CFG_AWS_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.aws_region || 'ap-southeast-1' }}
+      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_aws_stack || 'true' }}
+      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_openstack_stack || 'true' }}
+      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_object_storage || 'false' }}
+      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
+      CFG_OPENSTACK_ACTIVATE_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
+      CFG_PROJECT_PREFIX: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.project_prefix || 'threat-demo' }}
+      CFG_AWS_REGION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aws_region || 'ap-southeast-1' }}
       CFG_OPENSTACK_DEMO_PASSWORD: "ChangeMe123!"
       TFSTATE_ROOT: "~/.misconfig-hybrid-sandbox/tfstate"
     steps:
@@ -344,20 +344,20 @@ jobs:
     needs: deploy-infrastructure
     uses: ./.github/workflows/hybrid_runtime_scan.yml
     with:
-      include_aws_scan: ${{ github.event_name == 'workflow_dispatch' && inputs.include_aws_scan || 'true' }}
-      include_openstack_scan: ${{ github.event_name == 'workflow_dispatch' && inputs.include_openstack_scan || 'true' }}
-      include_openstack_object_storage: ${{ github.event_name == 'workflow_dispatch' && inputs.include_openstack_object_storage || 'false' }}
-      publish_to_siem: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_siem || 'true' }}
-      dispatch_live_integrations: ${{ github.event_name == 'workflow_dispatch' && inputs.dispatch_live_integrations || 'false' }}
-      enable_runtime_remediation: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_runtime_remediation || 'true' }}
+      include_aws_scan: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_aws_scan || 'true' }}
+      include_openstack_scan: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_scan || 'true' }}
+      include_openstack_object_storage: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_object_storage || 'false' }}
+      publish_to_siem: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_siem || 'true' }}
+      dispatch_live_integrations: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dispatch_live_integrations || 'false' }}
+      enable_runtime_remediation: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.enable_runtime_remediation || 'true' }}
       reconcile_m5_drift: "false"
       simulate_m5_drift: "false"
-      generate_iac_pr: ${{ github.event_name == 'workflow_dispatch' && inputs.generate_iac_pr || 'true' }}
-      force_rds_cutover: ${{ github.event_name == 'workflow_dispatch' && inputs.force_rds_cutover || 'false' }}
-      delete_archived_rds: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_archived_rds || 'false' }}
-      openrc_path: ${{ github.event_name == 'workflow_dispatch' && inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
-      openstack_activate_path: ${{ github.event_name == 'workflow_dispatch' && inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
-      project_prefix: ${{ github.event_name == 'workflow_dispatch' && inputs.project_prefix || 'threat-demo' }}
-      aws_region: ${{ github.event_name == 'workflow_dispatch' && inputs.aws_region || 'ap-southeast-1' }}
-      pipeline_source: ${{ github.event_name == 'workflow_dispatch' && inputs.pipeline_source || 'github-self-hosted-hybrid' }}
+      generate_iac_pr: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.generate_iac_pr || 'true' }}
+      force_rds_cutover: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rds_cutover || 'false' }}
+      delete_archived_rds: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.delete_archived_rds || 'false' }}
+      openrc_path: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
+      openstack_activate_path: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
+      project_prefix: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.project_prefix || 'threat-demo' }}
+      aws_region: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aws_region || 'ap-southeast-1' }}
+      pipeline_source: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pipeline_source || 'github-self-hosted-hybrid' }}
     secrets: inherit
