@@ -80,6 +80,10 @@ on:
         description: "Pipeline source tag stored in Elasticsearch"
         required: false
         default: "github-self-hosted-hybrid"
+      allow_insecure_deploy_override:
+        description: "Allow deployment to continue even if pre-deployment findings or container secrets are present"
+        required: false
+        default: "false"
 
 jobs:
   resolve-config:
@@ -101,6 +105,7 @@ jobs:
       project_prefix: ${{ steps.resolve.outputs.project_prefix }}
       aws_region: ${{ steps.resolve.outputs.aws_region }}
       pipeline_source: ${{ steps.resolve.outputs.pipeline_source }}
+      allow_insecure_deploy_override: ${{ steps.resolve.outputs.allow_insecure_deploy_override }}
     steps:
       - id: resolve
         env:
@@ -132,6 +137,7 @@ jobs:
               "project_prefix": "threat-demo",
               "aws_region": "ap-southeast-1",
               "pipeline_source": "github-self-hosted-hybrid",
+              "allow_insecure_deploy_override": "false",
           }
 
           for key, default in defaults.items():
@@ -148,6 +154,7 @@ jobs:
     env:
       CFG_DEPLOY_AWS_STACK: ${{ needs.resolve-config.outputs.deploy_aws_stack }}
       CFG_DEPLOY_OPENSTACK_STACK: ${{ needs.resolve-config.outputs.deploy_openstack_stack }}
+      CFG_ALLOW_INSECURE_DEPLOY_OVERRIDE: ${{ needs.resolve-config.outputs.allow_insecure_deploy_override }}
     steps:
       - uses: actions/checkout@v4
 
@@ -290,6 +297,23 @@ jobs:
             echo "No pre-deployment findings generated." > ./scan_results/pre_deployment_findings.txt
           fi
 
+      - name: Enforce pre-deployment quality gate
+        run: |
+          GATE_ARGS=(
+            --secret-guard-exit-code "${{ steps.container_secret_guard.outputs.exit_code }}"
+            --output ./artifacts/pre_deployment/pre_deployment_gate_summary.json
+          )
+          if [[ -f ./scan_results/pre_deployment_findings.json ]]; then
+            GATE_ARGS+=(--findings ./scan_results/pre_deployment_findings.json)
+          fi
+          if [[ -f ./triage_results/pre_deployment_decisions.json ]]; then
+            GATE_ARGS+=(--decisions ./triage_results/pre_deployment_decisions.json)
+          fi
+          if [[ "${CFG_ALLOW_INSECURE_DEPLOY_OVERRIDE}" == "true" ]]; then
+            GATE_ARGS+=(--allow-insecure-override)
+          fi
+          python -m src.triage.pre_deploy_gate "${GATE_ARGS[@]}"
+
       - name: Upload pre-deployment artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -301,6 +325,7 @@ jobs:
             scan_results/pre_deployment_findings.txt
             triage_results/pre_deployment_decisions.json
             artifacts/security/container_secret_report.json
+            artifacts/pre_deployment/pre_deployment_gate_summary.json
 
       - name: Write workflow summary
         run: |
@@ -310,6 +335,7 @@ jobs:
             echo "- AWS deploy target enabled: \`${CFG_DEPLOY_AWS_STACK}\`"
             echo "- OpenStack deploy target enabled: \`${CFG_DEPLOY_OPENSTACK_STACK}\`"
             echo "- Container secret guard exit code: \`${{ steps.container_secret_guard.outputs.exit_code }}\`"
+            echo "- Insecure deploy override: \`${CFG_ALLOW_INSECURE_DEPLOY_OVERRIDE}\`"
             echo "- Findings are published as artifacts for review before deployment."
           } >> "$GITHUB_STEP_SUMMARY"
 

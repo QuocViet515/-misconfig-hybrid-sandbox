@@ -190,7 +190,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build remediation KPI snapshots")
     parser.add_argument("--findings", required=True)
     parser.add_argument("--decisions", required=True)
-    parser.add_argument("--remediation-events", nargs="+", required=True)
+    parser.add_argument(
+        "--remediation-events",
+        action="append",
+        required=True,
+        help="Path to a remediation events JSON file. Repeat the flag for multiple files.",
+    )
     parser.add_argument("--output", default="artifacts/remediation/remediation_metrics.json")
     parser.add_argument("--pipeline-source", default="remediation-metrics")
     parser.add_argument("--branch", default="")
