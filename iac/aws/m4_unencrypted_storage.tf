@@ -172,8 +172,6 @@ resource "aws_db_instance" "m4_unencrypted_rds" {
   copy_tags_to_snapshot               = true
   auto_minor_version_upgrade          = true
   iam_database_authentication_enabled = true
-  performance_insights_enabled        = true
-  performance_insights_kms_key_id     = aws_kms_key.m4_storage_kms_key.arn
   deletion_protection                 = true
   enabled_cloudwatch_logs_exports     = ["audit", "error", "general", "slowquery"]
 
