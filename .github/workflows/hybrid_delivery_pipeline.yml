@@ -180,13 +180,40 @@ jobs:
       - name: Install tfsec and Trivy
         run: |
           mkdir -p "$HOME/.local/bin"
-          curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
-          TFSEC_BIN="$(command -v tfsec)"
+          TFSEC_BIN="$(command -v tfsec || true)"
+          TRIVY_BIN="$(command -v trivy || true)"
+
+          if [[ -z "$TFSEC_BIN" && -x /usr/local/bin/tfsec ]]; then
+            TFSEC_BIN=/usr/local/bin/tfsec
+          fi
+          if [[ -z "$TRIVY_BIN" && -x "$HOME/.local/bin/trivy" ]]; then
+            TRIVY_BIN="$HOME/.local/bin/trivy"
+          fi
+
+          if [[ -z "$TFSEC_BIN" ]]; then
+            curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+            TFSEC_BIN="$(command -v tfsec || true)"
+            if [[ -z "$TFSEC_BIN" && -x /usr/local/bin/tfsec ]]; then
+              TFSEC_BIN=/usr/local/bin/tfsec
+            fi
+          fi
+
+          if [[ -z "$TRIVY_BIN" ]]; then
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"
+            TRIVY_BIN="$(command -v trivy || true)"
+            if [[ -z "$TRIVY_BIN" && -x "$HOME/.local/bin/trivy" ]]; then
+              TRIVY_BIN="$HOME/.local/bin/trivy"
+            fi
+          fi
+
           test -n "$TFSEC_BIN"
+          test -x "$TFSEC_BIN"
+          test -n "$TRIVY_BIN"
+          test -x "$TRIVY_BIN"
           echo "$(dirname "$TFSEC_BIN")" >> "$GITHUB_PATH"
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$(dirname "$TRIVY_BIN")" >> "$GITHUB_PATH"
           "$TFSEC_BIN" --version
+          "$TRIVY_BIN" --version
 
       - name: Terraform format check
         run: |
