@@ -405,6 +405,11 @@ jobs:
       - deploy-infrastructure
       - resolve-config
     uses: ./.github/workflows/hybrid_runtime_scan.yml
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
     with:
       include_aws_scan: ${{ needs.resolve-config.outputs.include_aws_scan }}
       include_openstack_scan: ${{ needs.resolve-config.outputs.include_openstack_scan }}
