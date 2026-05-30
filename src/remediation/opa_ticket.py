@@ -54,12 +54,10 @@ def select_iam_wildcard_findings(findings: List[Dict[str, Any]]) -> List[Dict[st
     for finding in findings:
         if str(finding.get("provider") or "") != "aws":
             continue
-        if scenario_file(finding) == "m3_iam_wildcard.tf":
-            selected.append(finding)
-            continue
         text = " ".join(
             str(value or "")
             for value in (
+                finding.get("finding_code"),
                 finding.get("title"),
                 finding.get("description"),
                 finding.get("resource_id"),
