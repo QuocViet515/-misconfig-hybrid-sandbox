@@ -5,18 +5,20 @@ ACTION="${1:-}"
 STACK_DIR="${2:-}"
 STATE_ROOT="${3:-$HOME/.misconfig-hybrid-sandbox/tfstate}"
 STACK_NAME="${4:-}"
+STATE_NAMESPACE="${5:-default}"
 
 die() {
   echo "ERROR: $*" >&2
   exit 1
 }
 
-[[ -n "${ACTION}" ]] || die "Usage: $0 <restore|save|clear> <stack_dir> [state_root] [stack_name]"
+[[ -n "${ACTION}" ]] || die "Usage: $0 <restore|save|clear> <stack_dir> [state_root] [stack_name] [state_namespace]"
 [[ -n "${STACK_DIR}" ]] || die "Stack directory is required"
 
 STACK_DIR="$(cd "${STACK_DIR}" && pwd)"
 STACK_NAME="${STACK_NAME:-$(basename "${STACK_DIR}")}"
-PERSIST_DIR="${STATE_ROOT}/${STACK_NAME}"
+SAFE_NAMESPACE="$(echo "${STATE_NAMESPACE}" | tr '/[:space:]' '__')"
+PERSIST_DIR="${STATE_ROOT}/${SAFE_NAMESPACE}/${STACK_NAME}"
 
 mkdir -p "${PERSIST_DIR}"
 

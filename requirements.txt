@@ -8,3 +8,6 @@ pydantic==2.4.2
 
 # SIEM
 elasticsearch==8.13.2
+
+# Event-driven post-deployment detection
+pika==1.3.2

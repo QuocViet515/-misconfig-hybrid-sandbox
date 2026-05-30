@@ -1,0 +1,10 @@
+{
+  "event_id": "demo-openstack-admin-role",
+  "timestamp": "2026-05-30T02:15:00Z",
+  "event_type": "identity.role_assignment.created",
+  "payload": {
+    "project_name": "threat-demo-m3-overpriv-project",
+    "user_name": "threat-demo-m3-overpriv-user",
+    "role_name": "admin"
+  }
+}

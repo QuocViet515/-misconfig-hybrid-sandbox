@@ -186,6 +186,23 @@ jobs:
 
       - name: Install tfsec and Trivy
         run: |
+          install_with_retry() {
+            local attempts="$1"
+            shift
+            local delay=2
+            local n=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$n" -ge "$attempts" ]]; then
+                return 1
+              fi
+              n=$((n + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
           mkdir -p "$HOME/.local/bin"
           TFSEC_BIN="$(command -v tfsec || true)"
           TRIVY_BIN="$(command -v trivy || true)"
@@ -198,7 +215,7 @@ jobs:
           fi
 
           if [[ -z "$TFSEC_BIN" ]]; then
-            curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+            install_with_retry 3 bash -lc 'curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash'
             TFSEC_BIN="$(command -v tfsec || true)"
             if [[ -z "$TFSEC_BIN" && -x /usr/local/bin/tfsec ]]; then
               TFSEC_BIN=/usr/local/bin/tfsec
@@ -206,7 +223,7 @@ jobs:
           fi
 
           if [[ -z "$TRIVY_BIN" ]]; then
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"
+            install_with_retry 3 bash -lc 'curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"'
             TRIVY_BIN="$(command -v trivy || true)"
             if [[ -z "$TRIVY_BIN" && -x "$HOME/.local/bin/trivy" ]]; then
               TRIVY_BIN="$HOME/.local/bin/trivy"
@@ -381,9 +398,10 @@ jobs:
       - name: Restore persistent Terraform state
         run: |
           REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          STATE_NAMESPACE="${CFG_PROJECT_PREFIX}"
           mkdir -p "${REAL_TFSTATE_ROOT}"
-          bash ./scripts/sync_terraform_state.sh restore ./iac/aws "${REAL_TFSTATE_ROOT}" aws
-          bash ./scripts/sync_terraform_state.sh restore ./iac/openstack "${REAL_TFSTATE_ROOT}" openstack
+          bash ./scripts/sync_terraform_state.sh restore ./iac/aws "${REAL_TFSTATE_ROOT}" aws "${STATE_NAMESPACE}"
+          bash ./scripts/sync_terraform_state.sh restore ./iac/openstack "${REAL_TFSTATE_ROOT}" openstack "${STATE_NAMESPACE}"
 
       - name: Verify AWS authentication
         if: env.CFG_DEPLOY_AWS_STACK == 'true'
@@ -410,19 +428,27 @@ jobs:
         env:
           AWS_REGION: ${{ env.CFG_AWS_REGION }}
         run: |
-          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
           mkdir -p ./artifacts/deploy
           terraform -chdir=./iac/aws init -input=false
           terraform -chdir=./iac/aws apply -auto-approve \
             -var="aws_region=${AWS_REGION}" \
             -var="project_prefix=${CFG_PROJECT_PREFIX}"
+
+      - name: Capture AWS Terraform outputs
+        if: env.CFG_DEPLOY_AWS_STACK == 'true'
+        run: |
           terraform -chdir=./iac/aws output -json > ./artifacts/deploy/aws_outputs.json
-          bash ./scripts/sync_terraform_state.sh save ./iac/aws "${REAL_TFSTATE_ROOT}" aws
+
+      - name: Persist AWS Terraform state snapshot
+        if: always() && env.CFG_DEPLOY_AWS_STACK == 'true'
+        run: |
+          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          STATE_NAMESPACE="${CFG_PROJECT_PREFIX}"
+          bash ./scripts/sync_terraform_state.sh save ./iac/aws "${REAL_TFSTATE_ROOT}" aws "${STATE_NAMESPACE}"
 
       - name: Deploy OpenStack Terraform stack
         if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
         run: |
-          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
           mkdir -p ./artifacts/deploy
           OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
           OPENRC_PATH="${CFG_OPENRC_PATH}"
@@ -437,8 +463,18 @@ jobs:
             -var="project_prefix=${CFG_PROJECT_PREFIX}" \
             -var="demo_password=${CFG_OPENSTACK_DEMO_PASSWORD}" \
             -var="include_object_storage=${CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE}"
+
+      - name: Capture OpenStack Terraform outputs
+        if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
           terraform -chdir=./iac/openstack output -json > ./artifacts/deploy/openstack_outputs.json
-          bash ./scripts/sync_terraform_state.sh save ./iac/openstack "${REAL_TFSTATE_ROOT}" openstack
+
+      - name: Persist OpenStack Terraform state snapshot
+        if: always() && env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
+          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          STATE_NAMESPACE="${CFG_PROJECT_PREFIX}"
+          bash ./scripts/sync_terraform_state.sh save ./iac/openstack "${REAL_TFSTATE_ROOT}" openstack "${STATE_NAMESPACE}"
 
       - name: Upload deployment artifacts
         uses: actions/upload-artifact@v4
@@ -460,6 +496,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   post-deployment-scan-remediate:
+    if: >-
+      ${{
+        needs.resolve-config.outputs.include_aws_scan == 'true' ||
+        needs.resolve-config.outputs.include_openstack_scan == 'true' ||
+        needs.resolve-config.outputs.publish_to_siem == 'true' ||
+        needs.resolve-config.outputs.dispatch_live_integrations == 'true' ||
+        needs.resolve-config.outputs.enable_runtime_remediation == 'true' ||
+        needs.resolve-config.outputs.generate_iac_pr == 'true'
+      }}
     needs:
       - deploy-infrastructure
       - resolve-config

@@ -87,6 +87,7 @@ Publish findings lên Elasticsearch:
 - Nếu bạn đổi tên tài nguyên, set lại env vars: `WIDE_OPEN_SG`, `DEMO_PROJECT`, `DEMO_USER`, `DEMO_ROLE`.
 - Nếu muốn chuẩn `push -> check -> approval -> deploy -> post-scan -> remediate`, dùng workflow `Hybrid infrastructure delivery (self-hosted)`.
 - Nếu muốn detect drift hạ tầng sau khi đã deploy, dùng workflow `Detect IaC drift (self-hosted)`.
+- Nếu muốn detect gần realtime khi cloud có thay đổi sau deploy, xem [docs/EVENT_DRIVEN_POST_DEPLOY.md](./EVENT_DRIVEN_POST_DEPLOY.md).
 - Workflow drift chỉ có ý nghĩa khi stack đã được deploy qua control node hoặc runner đã lưu state snapshot bằng `scripts/sync_terraform_state.sh`.
 - Xem thêm [docs/HYBRID_SCENARIO_MAPPING.md](./HYBRID_SCENARIO_MAPPING.md) để map 6 kịch bản `AWS -> OpenStack` cho report/demo.
 - Sau khi xong phần scan/triage/dashboard, dùng thêm [docs/REMEDIATION.md](./REMEDIATION.md) để:
