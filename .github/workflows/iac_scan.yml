@@ -317,11 +317,28 @@ jobs:
 
       - name: Comment PR with findings
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v6
         with:
           script: |
             const fs = require('fs');
-            const report = JSON.parse(fs.readFileSync('checkov-report.json', 'utf8'));
+            const path = require('path');
+
+            function readJsonMaybeDirectory(targetPath) {
+              const stat = fs.statSync(targetPath);
+              if (stat.isDirectory()) {
+                const nested = fs.readdirSync(targetPath)
+                  .filter((name) => name.endsWith('.json'))
+                  .sort()[0];
+                if (!nested) {
+                  throw new Error(`No JSON files found under ${targetPath}`);
+                }
+                return JSON.parse(fs.readFileSync(path.join(targetPath, nested), 'utf8'));
+              }
+              return JSON.parse(fs.readFileSync(targetPath, 'utf8'));
+            }
+
+            const report = readJsonMaybeDirectory('checkov-report.json');
             const failed =
               (report.results && report.results.failed_checks) ||
               (report.check_type && report.check_type.results && report.check_type.results.failed_checks) ||
@@ -338,7 +355,7 @@ jobs:
                 ).join('\n') +
                 `\n\nGenerated bundle artifact: \`iac-remediation-bundle\``;
               
-              github.rest.issues.createComment({
+              await github.rest.issues.createComment({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
