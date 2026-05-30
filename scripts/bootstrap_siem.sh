@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Trigger-only comment to exercise the delivery workflow after state reseeding.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
