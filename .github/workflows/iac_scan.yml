@@ -167,13 +167,47 @@ jobs:
 
       - name: Install tfsec
         run: |
-          curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+          install_with_retry() {
+            local attempts="$1"
+            shift
+            local delay=2
+            local n=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$n" -ge "$attempts" ]]; then
+                return 1
+              fi
+              n=$((n + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+          install_with_retry 3 bash -lc 'curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash'
           command -v tfsec
           tfsec --version
 
       - name: Install Trivy
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          install_with_retry() {
+            local attempts="$1"
+            shift
+            local delay=2
+            local n=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$n" -ge "$attempts" ]]; then
+                return 1
+              fi
+              n=$((n + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+          install_with_retry 3 bash -lc 'curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin'
 
       - name: Run Checkov
         id: checkov
