@@ -428,21 +428,27 @@ jobs:
         env:
           AWS_REGION: ${{ env.CFG_AWS_REGION }}
         run: |
-          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
-          STATE_NAMESPACE="${CFG_PROJECT_PREFIX}"
           mkdir -p ./artifacts/deploy
           terraform -chdir=./iac/aws init -input=false
           terraform -chdir=./iac/aws apply -auto-approve \
             -var="aws_region=${AWS_REGION}" \
             -var="project_prefix=${CFG_PROJECT_PREFIX}"
+
+      - name: Capture AWS Terraform outputs
+        if: env.CFG_DEPLOY_AWS_STACK == 'true'
+        run: |
           terraform -chdir=./iac/aws output -json > ./artifacts/deploy/aws_outputs.json
+
+      - name: Persist AWS Terraform state snapshot
+        if: always() && env.CFG_DEPLOY_AWS_STACK == 'true'
+        run: |
+          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          STATE_NAMESPACE="${CFG_PROJECT_PREFIX}"
           bash ./scripts/sync_terraform_state.sh save ./iac/aws "${REAL_TFSTATE_ROOT}" aws "${STATE_NAMESPACE}"
 
       - name: Deploy OpenStack Terraform stack
         if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
         run: |
-          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
-          STATE_NAMESPACE="${CFG_PROJECT_PREFIX}"
           mkdir -p ./artifacts/deploy
           OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
           OPENRC_PATH="${CFG_OPENRC_PATH}"
@@ -457,7 +463,17 @@ jobs:
             -var="project_prefix=${CFG_PROJECT_PREFIX}" \
             -var="demo_password=${CFG_OPENSTACK_DEMO_PASSWORD}" \
             -var="include_object_storage=${CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE}"
+
+      - name: Capture OpenStack Terraform outputs
+        if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
           terraform -chdir=./iac/openstack output -json > ./artifacts/deploy/openstack_outputs.json
+
+      - name: Persist OpenStack Terraform state snapshot
+        if: always() && env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
+          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          STATE_NAMESPACE="${CFG_PROJECT_PREFIX}"
           bash ./scripts/sync_terraform_state.sh save ./iac/openstack "${REAL_TFSTATE_ROOT}" openstack "${STATE_NAMESPACE}"
 
       - name: Upload deployment artifacts
