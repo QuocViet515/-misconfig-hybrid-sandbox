@@ -5,16 +5,16 @@ variable "project_prefix" {
 }
 
 variable "demo_password" {
-  description = "Password for the intentionally overprivileged demo user"
+  description = "Password for the demo user"
   type        = string
   default     = "ChangeMe123!"
   sensitive   = true
 }
 
 variable "demo_role" {
-  description = "OpenStack role name to assign to the demo user"
+  description = "Reserved role name reference"
   type        = string
-  default     = "admin"
+  default     = "member"
 }
 
 variable "include_object_storage" {
@@ -29,3 +29,4 @@ locals {
   overpriv_user     = "${var.project_prefix}-m3-overpriv-user"
   public_container  = "${var.project_prefix}-m1-public-container"
 }
+
