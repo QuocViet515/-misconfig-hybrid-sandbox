@@ -496,6 +496,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   post-deployment-scan-remediate:
+    if: >-
+      ${{
+        needs.resolve-config.outputs.include_aws_scan == 'true' ||
+        needs.resolve-config.outputs.include_openstack_scan == 'true' ||
+        needs.resolve-config.outputs.publish_to_siem == 'true' ||
+        needs.resolve-config.outputs.dispatch_live_integrations == 'true' ||
+        needs.resolve-config.outputs.enable_runtime_remediation == 'true' ||
+        needs.resolve-config.outputs.generate_iac_pr == 'true'
+      }}
     needs:
       - deploy-infrastructure
       - resolve-config
