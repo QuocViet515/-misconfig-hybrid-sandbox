@@ -1,0 +1,21 @@
+{
+  "id": "demo-aws-open-sg",
+  "detail-type": "AWS API Call via CloudTrail",
+  "source": "aws.ec2",
+  "region": "ap-southeast-1",
+  "time": "2026-05-30T02:15:00Z",
+  "detail": {
+    "eventID": "cloudtrail-open-sg-demo",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "AuthorizeSecurityGroupIngress",
+    "awsRegion": "ap-southeast-1",
+    "sourceIPAddress": "203.0.113.10",
+    "userIdentity": {
+      "arn": "arn:aws:iam::123456789012:user/demo"
+    },
+    "requestParameters": {
+      "groupId": "sg-REPLACE_ME"
+    }
+  }
+}
+
