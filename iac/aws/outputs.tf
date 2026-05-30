@@ -92,7 +92,7 @@ output "m6_secure_dockerfile_path" {
 # ── Summary ──
 output "summary" {
   description = "Tóm tắt các kịch bản"
-  value = <<-EOT
+  value       = <<-EOT
 
   ╔══════════════════════════════════════════════════════════════╗
   ║          THREAT MODEL – ATTACK SCENARIOS DEPLOYED           ║

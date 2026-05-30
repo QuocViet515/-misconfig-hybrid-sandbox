@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid5, NAMESPACE_URL
@@ -48,7 +48,7 @@ def make_finding(
     resource_name: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> NormalizedFinding:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     discriminator = json.dumps(metadata or {}, sort_keys=True, default=str)
     return NormalizedFinding(
         finding_id=finding_uuid(code, resource_id, discriminator),
@@ -117,8 +117,11 @@ def parse_security_group_rules(path: str) -> List[NormalizedFinding]:
         remote_ip = str(get_first(rule, "IP Range", "ip_range", "remote_ip_prefix") or "")
         protocol = str(get_first(rule, "IP Protocol", "ip_protocol", "protocol") or "any").lower()
         port_range = str(get_first(rule, "Port Range", "port_range", "ports") or "all")
-        resource_name = str(get_first(rule, "Security Group", "security_group", "Name") or "unknown-sg")
-        resource_id = str(get_first(rule, "Security Group ID", "security_group_id", "ID") or resource_name)
+        rule_id = str(get_first(rule, "ID", "id", "Rule ID", "rule_id") or "")
+        security_group_name = str(get_first(rule, "Security Group", "security_group", "Name") or "unknown-sg")
+        security_group_id = str(
+            get_first(rule, "Security Group ID", "security_group_id", "security_group_uuid") or security_group_name
+        )
 
         if direction != "ingress":
             continue
@@ -135,13 +138,16 @@ def parse_security_group_rules(path: str) -> List[NormalizedFinding]:
                 severity=SeverityLevel.HIGH,
                 title="OpenStack security group allows inbound access from anywhere",
                 description=(
-                    f"Security group {resource_name} exposes protocol `{protocol}` on "
+                    f"Security group {security_group_name} exposes protocol `{protocol}` on "
                     f"`{port_range}` to `{remote_ip}`."
                 ),
-                resource_type="security_group",
-                resource_id=resource_id,
-                resource_name=resource_name,
+                resource_type="security_group_rule",
+                resource_id=rule_id or security_group_id,
+                resource_name=security_group_name,
                 metadata={
+                    "rule_id": rule_id,
+                    "security_group_id": security_group_id,
+                    "security_group_name": security_group_name,
                     "direction": direction,
                     "remote_ip": remote_ip,
                     "protocol": protocol,

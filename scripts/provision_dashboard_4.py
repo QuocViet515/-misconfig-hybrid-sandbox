@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Provision Dashboard 1 in Kibana using classic saved visualizations.
+Provision Dashboard 4 in Kibana for runtime and IaC remediation outcomes.
 """
 from __future__ import annotations
 
@@ -13,14 +13,11 @@ from typing import Any, Dict, List
 
 
 KIBANA_URL = os.getenv("KIBANA_URL", "http://localhost:5601").rstrip("/")
-FINDINGS_DATA_VIEW_TITLE = "misconfig-findings-*"
-FINDINGS_DATA_VIEW_NAME = os.getenv("KIBANA_FINDINGS_DATA_VIEW_NAME", "misconfig-findings-live")
 REMEDIATION_DATA_VIEW_TITLE = "misconfig-remediation-*"
 REMEDIATION_DATA_VIEW_NAME = os.getenv("KIBANA_REMEDIATION_DATA_VIEW_NAME", "misconfig-remediation")
-DASHBOARD_TITLE = "Hybrid Misconfiguration Detection Overview"
+DASHBOARD_TITLE = "Runtime Remediation Outcomes"
 KIBANA_VERSION = "8.8.0"
-FINDINGS_FILTER_QUERY = 'doc_kind.keyword : "finding"'
-REMEDIATION_FILTER_QUERY = "*"
+FILTER_QUERY = "*"
 
 
 def api_request(method: str, path: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -145,7 +142,7 @@ def total_table_vis_state(title: str) -> Dict[str, Any]:
     }
 
 
-def pie_vis_state(title: str, field: str) -> Dict[str, Any]:
+def donut_vis_state(title: str, field: str) -> Dict[str, Any]:
     return {
         "title": title,
         "type": "pie",
@@ -162,7 +159,7 @@ def pie_vis_state(title: str, field: str) -> Dict[str, Any]:
                     "order": "desc",
                     "orderBy": "1",
                     "otherBucket": True,
-                    "missingBucket": False,
+                    "missingBucket": True,
                 },
             },
         ],
@@ -177,7 +174,7 @@ def pie_vis_state(title: str, field: str) -> Dict[str, Any]:
     }
 
 
-def bar_vis_state(title: str, field: str) -> Dict[str, Any]:
+def count_bar_vis_state(title: str, field: str, y_axis_title: str = "Count") -> Dict[str, Any]:
     return {
         "title": title,
         "type": "histogram",
@@ -194,7 +191,7 @@ def bar_vis_state(title: str, field: str) -> Dict[str, Any]:
                     "order": "desc",
                     "orderBy": "1",
                     "otherBucket": False,
-                    "missingBucket": False,
+                    "missingBucket": True,
                 },
             },
         ],
@@ -223,7 +220,7 @@ def bar_vis_state(title: str, field: str) -> Dict[str, Any]:
                     "style": {},
                     "scale": {"type": "linear", "mode": "normal"},
                     "labels": {"show": True, "rotate": 0, "filter": False, "truncate": 100},
-                    "title": {"text": "Count"},
+                    "title": {"text": y_axis_title},
                 }
             ],
             "seriesParams": [
@@ -231,7 +228,7 @@ def bar_vis_state(title: str, field: str) -> Dict[str, Any]:
                     "show": True,
                     "type": "histogram",
                     "mode": "stacked",
-                    "data": {"label": "Count", "id": "1"},
+                    "data": {"label": y_axis_title, "id": "1"},
                     "valueAxis": "ValueAxis-1",
                     "drawLinesBetweenPoints": True,
                     "showCircles": True,
@@ -255,7 +252,7 @@ def create_dashboard(dashboard_id: str, panels: List[Dict[str, Any]]) -> None:
             {
                 "version": KIBANA_VERSION,
                 "type": "visualization",
-                "panelIndex": stable_uuid(f"dashboard-panel-{panel['id']}"),
+                "panelIndex": stable_uuid(f"dashboard-4-panel-{panel['id']}"),
                 "gridData": panel["gridData"],
                 "embeddableConfig": {},
                 "panelRefName": ref_name,
@@ -265,7 +262,7 @@ def create_dashboard(dashboard_id: str, panels: List[Dict[str, Any]]) -> None:
     payload = {
         "attributes": {
             "title": DASHBOARD_TITLE,
-            "description": "Dashboard 1 aligned with the capstone wording in 05_Misconfig_AutoRemediate.md",
+            "description": "Dashboard 4 focuses on runtime and IaC remediation execution outcomes.",
             "timeRestore": False,
             "optionsJSON": json.dumps(
                 {
@@ -290,73 +287,56 @@ def create_dashboard(dashboard_id: str, panels: List[Dict[str, Any]]) -> None:
 
 
 def main() -> int:
-    findings_data_view_id = ensure_data_view(FINDINGS_DATA_VIEW_TITLE, FINDINGS_DATA_VIEW_NAME)
     remediation_data_view_id = ensure_data_view(REMEDIATION_DATA_VIEW_TITLE, REMEDIATION_DATA_VIEW_NAME)
 
     visualizations = [
         {
-            "id": stable_uuid("vis-total-findings"),
-            "title": "Total Findings",
-            "vis_state": total_table_vis_state("Total Findings"),
-            "data_view_id": findings_data_view_id,
-            "filter_query": FINDINGS_FILTER_QUERY,
-            "gridData": {"x": 0, "y": 0, "w": 12, "h": 12, "i": stable_uuid("grid-total")},
+            "id": stable_uuid("vis-remediation-total"),
+            "title": "Total Remediation Events",
+            "vis_state": total_table_vis_state("Total Remediation Events"),
+            "gridData": {"x": 0, "y": 0, "w": 10, "h": 10, "i": stable_uuid("grid-remediation-total")},
         },
         {
-            "id": stable_uuid("vis-provider"),
-            "title": "Coverage by Cloud Provider",
-            "vis_state": pie_vis_state("Coverage by Cloud Provider", "provider.keyword"),
-            "data_view_id": findings_data_view_id,
-            "filter_query": FINDINGS_FILTER_QUERY,
-            "gridData": {"x": 12, "y": 0, "w": 18, "h": 12, "i": stable_uuid("grid-provider")},
+            "id": stable_uuid("vis-remediation-status"),
+            "title": "Remediation Status Distribution",
+            "vis_state": donut_vis_state("Remediation Status Distribution", "status.keyword"),
+            "gridData": {"x": 10, "y": 0, "w": 18, "h": 10, "i": stable_uuid("grid-remediation-status")},
         },
         {
-            "id": stable_uuid("vis-severity"),
-            "title": "Misconfiguration Severity Distribution",
-            "vis_state": bar_vis_state("Misconfiguration Severity Distribution", "severity.keyword"),
-            "data_view_id": findings_data_view_id,
-            "filter_query": FINDINGS_FILTER_QUERY,
-            "gridData": {"x": 30, "y": 0, "w": 18, "h": 12, "i": stable_uuid("grid-severity")},
-        },
-        {
-            "id": stable_uuid("vis-scanner"),
-            "title": "Coverage by Scanner",
-            "vis_state": bar_vis_state("Coverage by Scanner", "scanner.keyword"),
-            "data_view_id": findings_data_view_id,
-            "filter_query": FINDINGS_FILTER_QUERY,
-            "gridData": {"x": 0, "y": 12, "w": 16, "h": 16, "i": stable_uuid("grid-scanner")},
-        },
-        {
-            "id": stable_uuid("vis-resource-type"),
-            "title": "Top Affected Resource Types",
-            "vis_state": bar_vis_state("Top Affected Resource Types", "resource_type.keyword"),
-            "data_view_id": findings_data_view_id,
-            "filter_query": FINDINGS_FILTER_QUERY,
-            "gridData": {"x": 16, "y": 12, "w": 16, "h": 16, "i": stable_uuid("grid-resource-type")},
-        },
-        {
-            "id": stable_uuid("vis-remediation-status-overview"),
-            "title": "Remediation Status Snapshot",
-            "vis_state": pie_vis_state("Remediation Status Snapshot", "status.keyword"),
-            "data_view_id": remediation_data_view_id,
-            "filter_query": REMEDIATION_FILTER_QUERY,
-            "gridData": {"x": 32, "y": 12, "w": 16, "h": 16, "i": stable_uuid("grid-remediation-status-overview")},
-        },
-        {
-            "id": stable_uuid("vis-finding-code"),
-            "title": "Top Misconfiguration Classes",
-            "vis_state": bar_vis_state("Top Misconfiguration Classes", "finding_code.keyword"),
-            "data_view_id": findings_data_view_id,
-            "filter_query": FINDINGS_FILTER_QUERY,
-            "gridData": {"x": 0, "y": 28, "w": 24, "h": 16, "i": stable_uuid("grid-finding-code")},
-        },
-        {
-            "id": stable_uuid("vis-remediation-provider-overview"),
+            "id": stable_uuid("vis-remediation-provider"),
             "title": "Remediation Events by Cloud Provider",
-            "vis_state": bar_vis_state("Remediation Events by Cloud Provider", "provider.keyword"),
-            "data_view_id": remediation_data_view_id,
-            "filter_query": REMEDIATION_FILTER_QUERY,
-            "gridData": {"x": 24, "y": 28, "w": 24, "h": 16, "i": stable_uuid("grid-remediation-provider-overview")},
+            "vis_state": donut_vis_state("Remediation Events by Cloud Provider", "provider.keyword"),
+            "gridData": {"x": 28, "y": 0, "w": 20, "h": 10, "i": stable_uuid("grid-remediation-provider")},
+        },
+        {
+            "id": stable_uuid("vis-remediation-manual-path"),
+            "title": "Manual Approval vs Automatic Path",
+            "vis_state": donut_vis_state("Manual Approval vs Automatic Path", "manual_approval"),
+            "gridData": {"x": 0, "y": 10, "w": 16, "h": 16, "i": stable_uuid("grid-remediation-manual-path")},
+        },
+        {
+            "id": stable_uuid("vis-remediation-recommendation"),
+            "title": "Remediation Recommendation Path",
+            "vis_state": donut_vis_state("Remediation Recommendation Path", "recommendation.keyword"),
+            "gridData": {"x": 16, "y": 10, "w": 16, "h": 16, "i": stable_uuid("grid-remediation-recommendation")},
+        },
+        {
+            "id": stable_uuid("vis-remediation-action-kind"),
+            "title": "Remediation Action Kind",
+            "vis_state": donut_vis_state("Remediation Action Kind", "action_kind.keyword"),
+            "gridData": {"x": 32, "y": 10, "w": 16, "h": 16, "i": stable_uuid("grid-remediation-action-kind")},
+        },
+        {
+            "id": stable_uuid("vis-remediation-status-provider"),
+            "title": "Remediation Events by Pipeline Source",
+            "vis_state": count_bar_vis_state("Remediation Events by Pipeline Source", "pipeline_source.keyword"),
+            "gridData": {"x": 0, "y": 26, "w": 24, "h": 16, "i": stable_uuid("grid-remediation-pipeline-source")},
+        },
+        {
+            "id": stable_uuid("vis-remediation-finding-code"),
+            "title": "Top Remediated Finding Codes",
+            "vis_state": count_bar_vis_state("Top Remediated Finding Codes", "finding_code.keyword"),
+            "gridData": {"x": 24, "y": 26, "w": 24, "h": 16, "i": stable_uuid("grid-remediation-finding-code")},
         },
     ]
 
@@ -365,11 +345,11 @@ def main() -> int:
             vis_id=vis["id"],
             title=vis["title"],
             vis_state=vis["vis_state"],
-            data_view_id=vis["data_view_id"],
-            filter_query=vis["filter_query"],
+            data_view_id=remediation_data_view_id,
+            filter_query=FILTER_QUERY,
         )
 
-    dashboard_id = find_saved_object_id("dashboard", DASHBOARD_TITLE) or stable_uuid("dashboard-1")
+    dashboard_id = find_saved_object_id("dashboard", DASHBOARD_TITLE) or stable_uuid("dashboard-4")
     create_dashboard(dashboard_id, visualizations)
 
     print(f"Provisioned dashboard: {DASHBOARD_TITLE}")

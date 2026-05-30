@@ -7,9 +7,10 @@ COMPOSE_FILE="${COMPOSE_FILE:-${REPO_ROOT}/docker-compose.siem.yml}"
 KIBANA_URL="${KIBANA_URL:-http://localhost:5601}"
 ELASTICSEARCH_URL="${ELASTICSEARCH_URL:-http://localhost:9200}"
 
-DASHBOARD_ONE_ID="9ecc27d0-4c8f-11f1-ad2f-f9c2ff1b510b"
-DASHBOARD_TWO_ID="de604fce-a5c0-565b-a2c3-127350b0e727"
-DASHBOARD_THREE_ID="efa53aba-2b01-551e-a579-726064c83d52"
+DASHBOARD_ONE_TITLE="Hybrid Misconfiguration Detection Overview"
+DASHBOARD_TWO_TITLE="Triage and Remediation Readiness"
+DASHBOARD_THREE_TITLE="Compliance Evidence and Investigation Queue"
+DASHBOARD_FOUR_TITLE="Runtime Remediation Outcomes"
 
 require_command() {
   local cmd="$1"
@@ -59,11 +60,41 @@ provision_dashboards() {
   KIBANA_URL="${KIBANA_URL}" python3 "${REPO_ROOT}/scripts/provision_dashboard_1.py"
   KIBANA_URL="${KIBANA_URL}" python3 "${REPO_ROOT}/scripts/provision_dashboard_2.py"
   KIBANA_URL="${KIBANA_URL}" python3 "${REPO_ROOT}/scripts/provision_dashboard_3.py"
+  KIBANA_URL="${KIBANA_URL}" python3 "${REPO_ROOT}/scripts/provision_dashboard_4.py"
+}
+
+find_dashboard_id() {
+  local dashboard_title="$1"
+  local payload
+  payload="$(curl -fsS -H 'kbn-xsrf: true' "${KIBANA_URL}/api/saved_objects/_find?type=dashboard&search_fields=title&search=${dashboard_title// /%20}&per_page=100")"
+  printf '%s' "${payload}" | python3 -c '
+import json, sys
+target = sys.argv[1]
+data = json.load(sys.stdin)
+for item in data.get("saved_objects", []):
+    if item.get("attributes", {}).get("title") == target:
+        print(item.get("id", ""))
+        raise SystemExit(0)
+raise SystemExit(1)
+' "${dashboard_title}"
 }
 
 verify_dashboard() {
-  local dashboard_id="$1"
+  local dashboard_title="$1"
+  local dashboard_id
+  dashboard_id="$(find_dashboard_id "${dashboard_title}")"
   curl -fsS -H 'kbn-xsrf: true' "${KIBANA_URL}/api/saved_objects/dashboard/${dashboard_id}" >/dev/null
+  printf '%s' "${dashboard_id}"
+}
+
+container_running() {
+  local name="$1"
+  docker ps --format '{{.Names}}' | grep -Fx "$name" >/dev/null 2>&1
+}
+
+container_exists() {
+  local name="$1"
+  docker ps -a --format '{{.Names}}' | grep -Fx "$name" >/dev/null 2>&1
 }
 
 main() {
@@ -77,7 +108,14 @@ main() {
     exit 1
   fi
 
-  docker compose -f "${COMPOSE_FILE}" up -d
+  if container_running "misconfig-elasticsearch" && container_running "misconfig-kibana"; then
+    echo "Reusing existing misconfig Elasticsearch/Kibana containers."
+  elif container_exists "misconfig-elasticsearch" && container_exists "misconfig-kibana"; then
+    echo "Starting existing misconfig Elasticsearch/Kibana containers."
+    docker start misconfig-elasticsearch misconfig-kibana >/dev/null
+  else
+    docker compose -f "${COMPOSE_FILE}" up -d
+  fi
 
   wait_for_url "Elasticsearch" "${ELASTICSEARCH_URL}"
   wait_for_url "Kibana" "${KIBANA_URL}/api/status"
@@ -88,9 +126,10 @@ main() {
   ensure_data_view "misconfig-metrics-*" "misconfig-metrics"
   provision_dashboards
 
-  verify_dashboard "${DASHBOARD_ONE_ID}"
-  verify_dashboard "${DASHBOARD_TWO_ID}"
-  verify_dashboard "${DASHBOARD_THREE_ID}"
+  DASHBOARD_ONE_ID="$(verify_dashboard "${DASHBOARD_ONE_TITLE}")"
+  DASHBOARD_TWO_ID="$(verify_dashboard "${DASHBOARD_TWO_TITLE}")"
+  DASHBOARD_THREE_ID="$(verify_dashboard "${DASHBOARD_THREE_TITLE}")"
+  DASHBOARD_FOUR_ID="$(verify_dashboard "${DASHBOARD_FOUR_TITLE}")"
 
   cat <<EOF
 SIEM bootstrap completed.
@@ -100,6 +139,7 @@ Dashboards:
 - ${KIBANA_URL}/app/dashboards#/view/${DASHBOARD_ONE_ID}
 - ${KIBANA_URL}/app/dashboards#/view/${DASHBOARD_TWO_ID}
 - ${KIBANA_URL}/app/dashboards#/view/${DASHBOARD_THREE_ID}
+- ${KIBANA_URL}/app/dashboards#/view/${DASHBOARD_FOUR_ID}
 EOF
 }
 

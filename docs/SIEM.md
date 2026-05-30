@@ -102,8 +102,8 @@ Nếu cần remediation về sau:
   --tfsec \
   --trivy \
   --output-dir ./scan_results \
-  --terraform-dir ./iac/terraform \
-  --trivy-scan-ref ./iac/terraform
+  --terraform-dir ./iac/aws \
+  --trivy-scan-ref ./iac/aws
 
 ./.venv/bin/python -m src.triage.engine \
   --input ./scan_results/findings.json \

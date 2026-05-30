@@ -90,7 +90,8 @@ def main() -> int:
     repo_root = Path(args.repo_root).resolve()
     summary = json.loads((bundle_dir / "summary.json").read_text(encoding="utf-8"))
     pr_body = (bundle_dir / "PR_BODY.md").read_text(encoding="utf-8")
-    fixed_tree = bundle_dir / "fixed_tree" / "iac" / "terraform"
+    terraform_subdir = summary.get("terraform_source") or "iac/aws"
+    fixed_tree = bundle_dir / "fixed_tree" / Path(terraform_subdir)
 
     if int(summary.get("supported_findings_count", 0)) <= 0:
         logger.info("No supported findings in bundle; skipping PR creation")
@@ -117,9 +118,9 @@ def main() -> int:
         )
         return 0
 
-    copy_fixed_tree(fixed_tree, repo_root / "iac" / "terraform")
+    copy_fixed_tree(fixed_tree, repo_root / Path(terraform_subdir))
 
-    diff_check = run_git(["status", "--porcelain", "--", "iac/terraform"], repo_root)
+    diff_check = run_git(["status", "--porcelain", "--", terraform_subdir], repo_root)
     if not diff_check.stdout.strip():
         logger.info("Bundle did not change repository files; skipping PR creation")
         return 0
@@ -127,7 +128,7 @@ def main() -> int:
     run_git(["checkout", "-b", branch_name], repo_root)
     run_git(["config", "user.name", "github-actions[bot]"], repo_root)
     run_git(["config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], repo_root)
-    run_git(["add", "iac/terraform"], repo_root)
+    run_git(["add", terraform_subdir], repo_root)
     run_git(["commit", "-m", args.commit_message], repo_root)
     run_git(["push", "origin", branch_name], repo_root)
 

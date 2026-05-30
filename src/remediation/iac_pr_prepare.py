@@ -326,6 +326,7 @@ def generate_events(
 def build_pr_body(
     *,
     branch_name: str,
+    terraform_path_label: str,
     files_changed: List[str],
     supported_findings: List[Dict[str, Any]],
     unsupported_findings: List[Dict[str, Any]],
@@ -360,7 +361,7 @@ def build_pr_body(
             "## Validation",
             "",
             "- Review generated patch and run `terraform fmt -recursive`.",
-            "- Run `terraform validate` in `iac/terraform`.",
+            f"- Run `terraform validate` in `{terraform_path_label}`.",
             "- Re-run Checkov before merging.",
         ]
     )
@@ -371,7 +372,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate PR-ready IaC remediation artifacts")
     parser.add_argument("--findings", required=True)
     parser.add_argument("--decisions", required=True)
-    parser.add_argument("--terraform-dir", default="iac/terraform")
+    parser.add_argument("--terraform-dir", default="iac/aws")
     parser.add_argument("--output-dir", default="artifacts/iac_pr")
     parser.add_argument("--run-label", default="")
     parser.add_argument("--pipeline-source", default="iac-pr-prep")
@@ -392,7 +393,8 @@ def main() -> int:
     run_dir = output_root / run_label
     if run_dir.exists():
         shutil.rmtree(run_dir)
-    fixed_dir = run_dir / "fixed_tree" / "iac" / "terraform"
+    terraform_rel = Path(args.terraform_dir).as_posix().strip("/")
+    fixed_dir = run_dir / "fixed_tree" / terraform_rel
     shutil.copytree(terraform_dir, fixed_dir)
 
     supported_findings: List[Dict[str, Any]] = []
@@ -422,8 +424,8 @@ def main() -> int:
                 difflib.unified_diff(
                     variables_before.splitlines(keepends=True),
                     variables_after.splitlines(keepends=True),
-                    fromfile="a/iac/terraform/variables.tf",
-                    tofile="b/iac/terraform/variables.tf",
+                    fromfile=f"a/{terraform_rel}/variables.tf",
+                    tofile=f"b/{terraform_rel}/variables.tf",
                 )
             )
         )
@@ -462,8 +464,8 @@ def main() -> int:
                 difflib.unified_diff(
                     before.splitlines(keepends=True),
                     after.splitlines(keepends=True),
-                    fromfile=f"a/iac/terraform/{Path(relative_path).name}",
-                    tofile=f"b/iac/terraform/{Path(relative_path).name}",
+                    fromfile=f"a/{terraform_rel}/{Path(relative_path).name}",
+                    tofile=f"b/{terraform_rel}/{Path(relative_path).name}",
                 )
             )
         )
@@ -479,6 +481,7 @@ def main() -> int:
     branch_name = f"autofix/{utc_now().strftime('%Y%m%d-%H%M%S')}"
     pr_body = build_pr_body(
         branch_name=branch_name,
+        terraform_path_label=terraform_rel,
         files_changed=files_changed,
         supported_findings=supported_findings,
         unsupported_findings=unsupported_findings,

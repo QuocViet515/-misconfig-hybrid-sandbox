@@ -137,10 +137,12 @@ def remediation_plan_for_openstack(finding: Dict[str, Any]) -> Tuple[List[List[s
         }
 
     if code == "OPENSTACK_SG_WIDE_OPEN":
-        rule_id = str(finding.get("resource_id") or "")
+        rule_id = str(metadata.get("rule_id") or finding.get("resource_id") or "")
         delete_command = ["openstack", "security", "group", "rule", "delete", rule_id]
         return [delete_command], {
             "rule_id": rule_id,
+            "security_group_id": metadata.get("security_group_id"),
+            "security_group_name": metadata.get("security_group_name"),
             "port_range": metadata.get("port_range"),
             "remote_ip": metadata.get("remote_ip"),
         }
@@ -271,7 +273,14 @@ def execute_openstack_plan(
 
     if simulate_success:
         if str(finding.get("finding_code")) == "OPENSTACK_SG_WIDE_OPEN":
-            commands = [["openstack", "security", "group", "rule", "delete", str(finding.get("resource_id") or "<wide-open-rule-id>")]]
+            commands = [[
+                "openstack",
+                "security",
+                "group",
+                "rule",
+                "delete",
+                str((finding.get("metadata") or {}).get("rule_id") or finding.get("resource_id") or "<wide-open-rule-id>"),
+            ]]
         return (
             RemediationStatus.SUCCESS,
             "Simulated successful remediation for demo flow.",
@@ -322,7 +331,7 @@ def execute_openstack_plan(
             return RemediationStatus.FAILED, note, commands, metadata
         return RemediationStatus.SUCCESS, note, commands, metadata
     if code == "OPENSTACK_SG_WIDE_OPEN":
-        verified, note = verify_openstack_sg_rule_deleted(str(finding.get("resource_id") or ""))
+        verified, note = verify_openstack_sg_rule_deleted(str(metadata.get("rule_id") or finding.get("resource_id") or ""))
         if not verified:
             return RemediationStatus.FAILED, note, commands, metadata
         return RemediationStatus.SUCCESS, note, commands, metadata
@@ -423,7 +432,7 @@ def main() -> int:
                 status=RemediationStatus.PENDING,
                 started_at=started_at,
                 completed_at=None,
-                manual_approval=False,
+                manual_approval=True,
                 dry_run=not args.execute,
                 pipeline_source=args.pipeline_source,
                 branch=args.branch,

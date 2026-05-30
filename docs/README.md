@@ -1,6 +1,10 @@
 # Hybrid Cloud Lab Quickstart
 
-Mục tiêu hiện tại: triển khai Cloud B (OpenStack) với 3 misconfiguration tối thiểu để chạy chung pipeline với AWS.
+Mục tiêu hiện tại: triển khai lab hybrid theo 2 pha rõ ràng:
+
+- `iac_scan.yml`: pre-deployment review cho pull request hoặc chạy tay
+- `hybrid_delivery_pipeline.yml`: push-to-deploy, rồi post-deployment scan/triage/remediation
+- `detect_iac_drift.yml`: định kỳ hoặc chạy tay để so sánh live state với Terraform state đã lưu
 
 ## 1) Prerequisites
 
@@ -14,7 +18,7 @@ source ~/openrc
 openstack token issue
 ```
 
-## 2) Deploy 3 Misconfigurations on OpenStack (Cloud B)
+## 2) Deploy OpenStack Misconfigurations (Cloud B)
 
 Từ root repo:
 
@@ -26,14 +30,17 @@ PROJECT_PREFIX=threat-demo DEMO_PASSWORD='ChangeMe123!' ./openstack/deploy_misco
 
 Script sẽ tạo:
 
-- M1: Swift container public read (`.r:*,.rlistings`)
 - M2: Security group mở `22/tcp`, `3389/tcp`, `all` từ `0.0.0.0/0`
 - M3: User được gán role `admin` trên project demo
+
+Lưu ý:
+
+- Stack Terraform `iac/openstack` hiện model `M2` và `M3`.
+- `M1` object storage vẫn là optional path và không được provision trong stack này vì lab hiện không có Swift/object-store endpoint.
 
 ## 3) Verify
 
 ```bash
-openstack container show threat-demo-m1-public-container -f yaml
 openstack security group rule list threat-demo-m2-wide-open-sg
 openstack role assignment list --project threat-demo-m3-overpriv-project --user threat-demo-m3-overpriv-user --names
 ```
@@ -77,7 +84,10 @@ Publish findings lên Elasticsearch:
 ## 6) Notes
 
 - Chỉ chạy trong lab, không chạy trên môi trường production.
-- Nếu bạn đổi tên tài nguyên, set lại env vars: `PUBLIC_CONTAINER`, `WIDE_OPEN_SG`, `DEMO_PROJECT`, `DEMO_USER`, `DEMO_ROLE`.
+- Nếu bạn đổi tên tài nguyên, set lại env vars: `WIDE_OPEN_SG`, `DEMO_PROJECT`, `DEMO_USER`, `DEMO_ROLE`.
+- Nếu muốn chuẩn `push -> check -> approval -> deploy -> post-scan -> remediate`, dùng workflow `Hybrid infrastructure delivery (self-hosted)`.
+- Nếu muốn detect drift hạ tầng sau khi đã deploy, dùng workflow `Detect IaC drift (self-hosted)`.
+- Workflow drift chỉ có ý nghĩa khi stack đã được deploy qua control node hoặc runner đã lưu state snapshot bằng `scripts/sync_terraform_state.sh`.
 - Xem thêm [docs/HYBRID_SCENARIO_MAPPING.md](./HYBRID_SCENARIO_MAPPING.md) để map 6 kịch bản `AWS -> OpenStack` cho report/demo.
 - Sau khi xong phần scan/triage/dashboard, dùng thêm [docs/REMEDIATION.md](./REMEDIATION.md) để:
   - export 3 dashboard thành artifact `.ndjson`

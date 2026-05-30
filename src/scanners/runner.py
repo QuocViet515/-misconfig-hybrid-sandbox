@@ -62,7 +62,7 @@ class ScannerRunner:
             logger.error(f"ScoutSuite scan failed: {str(e)}", exc_info=True)
             return None
 
-    def run_checkov(self, terraform_dir: str = "./iac/terraform") -> Optional[ScanResult]:
+    def run_checkov(self, terraform_dir: str = "./iac/aws", provider: str = "aws") -> Optional[ScanResult]:
         """Run Checkov IaC scanner"""
         try:
             logger.info("Starting Checkov scan...")
@@ -73,7 +73,7 @@ class ScannerRunner:
 
             scanner = CheckovScanner(
                 terraform_dir=terraform_dir,
-                provider="aws"
+                provider=provider
             )
 
             result = scanner.execute()
@@ -107,7 +107,7 @@ class ScannerRunner:
             logger.error(f"CloudSploit scan failed: {str(e)}", exc_info=True)
             return None
 
-    def run_tfsec(self, terraform_dir: str = "./iac/terraform") -> Optional[ScanResult]:
+    def run_tfsec(self, terraform_dir: str = "./iac/aws", provider: str = "aws") -> Optional[ScanResult]:
         """Run tfsec IaC scanner"""
         try:
             logger.info("Starting tfsec scan...")
@@ -118,7 +118,7 @@ class ScannerRunner:
 
             scanner = TfsecScanner(
                 terraform_dir=terraform_dir,
-                provider="aws",
+                provider=provider,
             )
 
             result = scanner.execute()
@@ -128,7 +128,7 @@ class ScannerRunner:
             logger.error(f"tfsec scan failed: {str(e)}", exc_info=True)
             return None
 
-    def run_trivy(self, scan_ref: str = "./iac/terraform") -> Optional[ScanResult]:
+    def run_trivy(self, scan_ref: str = "./iac/aws", provider: str = "aws") -> Optional[ScanResult]:
         """Run Trivy config/secret scanner"""
         try:
             logger.info("Starting Trivy scan...")
@@ -138,7 +138,7 @@ class ScannerRunner:
                 return None
 
             scanner = TrivyScanner(
-                provider="aws",
+                provider=provider,
                 scan_ref=scan_ref,
             )
 
@@ -255,8 +255,9 @@ class ScannerRunner:
             enable_cloudsploit: bool = True,
             enable_tfsec: bool = True,
             enable_trivy: bool = True,
-            terraform_dir: str = "./iac/terraform",
-            trivy_scan_ref: str = "./iac/terraform",
+            provider: str = "aws",
+            terraform_dir: str = "./iac/aws",
+            trivy_scan_ref: str = "./iac/aws",
     ) -> int:
         """
         Execute scanners based on flags
@@ -280,7 +281,7 @@ class ScannerRunner:
                     self.scan_results.append(result)
 
             if enable_checkov:
-                result = self.run_checkov(terraform_dir)
+                result = self.run_checkov(terraform_dir, provider)
                 if result:
                     self.scan_results.append(result)
 
@@ -290,12 +291,12 @@ class ScannerRunner:
                     self.scan_results.append(result)
 
             if enable_tfsec:
-                result = self.run_tfsec(terraform_dir)
+                result = self.run_tfsec(terraform_dir, provider)
                 if result:
                     self.scan_results.append(result)
 
             if enable_trivy:
-                result = self.run_trivy(trivy_scan_ref)
+                result = self.run_trivy(trivy_scan_ref, provider)
                 if result:
                     self.scan_results.append(result)
 
@@ -359,14 +360,19 @@ def main():
         help="Output directory for scan results (default: ./scan_results)"
     )
     parser.add_argument(
+        "--provider",
+        default="aws",
+        help="Cloud provider label attached to normalized IaC findings (default: aws)"
+    )
+    parser.add_argument(
         "--terraform-dir",
-        default="./iac/terraform",
-        help="Terraform directory for Checkov (default: ./iac/terraform)"
+        default="./iac/aws",
+        help="Terraform directory for Checkov (default: ./iac/aws)"
     )
     parser.add_argument(
         "--trivy-scan-ref",
-        default="./iac/terraform",
-        help="Path for Trivy filesystem scan (default: ./iac/terraform)"
+        default="./iac/aws",
+        help="Path for Trivy filesystem scan (default: ./iac/aws)"
     )
 
     args = parser.parse_args()
@@ -381,6 +387,7 @@ def main():
         enable_cloudsploit=args.cloudsploit or enable_all,
         enable_tfsec=args.tfsec or enable_all,
         enable_trivy=args.trivy or enable_all,
+        provider=args.provider,
         terraform_dir=args.terraform_dir,
         trivy_scan_ref=args.trivy_scan_ref,
     )

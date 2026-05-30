@@ -4,15 +4,9 @@ on:
     branches:
       - main
     paths:
-      - 'iac/terraform/**'
+      - 'iac/aws/**'
+      - 'iac/openstack/**'
       - '.github/workflows/iac_scan.yml'
-  push:
-    branches:
-      - main
-      - feat/normalize
-      - develop
-    paths:
-      - 'iac/terraform/**'
   workflow_dispatch:
     inputs:
       auto_open_fix_pr:
@@ -43,7 +37,7 @@ jobs:
         run: |
           set +e
           python scripts/scan_container_secrets.py \
-            --paths ./iac/terraform/m6_container_secrets.tf ./iac/terraform/docker \
+            --paths ./iac/aws/m6_container_secrets.tf ./iac/aws/docker \
             --output ./artifacts/security/container_secret_report.json
           echo "exit_code=$?" >> $GITHUB_OUTPUT
           exit 0
@@ -112,10 +106,15 @@ jobs:
 
   tf-validate:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        working_directory:
+          - ./iac/aws
+          - ./iac/openstack
     defaults:
       run:
         shell: bash
-        working-directory: ./iac/terraform
+        working-directory: ${{ matrix.working_directory }}
     steps:
       - uses: actions/checkout@v4
 
@@ -179,7 +178,7 @@ jobs:
       - name: Run Checkov
         id: checkov
         run: |
-          /tmp/checkov-venv/bin/checkov -d ./iac/terraform --output json --output-file checkov-report.json \
+          /tmp/checkov-venv/bin/checkov -d ./iac/aws --output json --output-file checkov-report.json \
           --skip-framework dockerfile || true
 
       - name: Upload Checkov report
@@ -196,9 +195,22 @@ jobs:
             --checkov \
             --tfsec \
             --trivy \
-            --output-dir ./scan_results \
-            --terraform-dir ./iac/terraform \
-            --trivy-scan-ref ./iac/terraform
+            --output-dir ./scan_results/aws \
+            --provider aws \
+            --terraform-dir ./iac/aws \
+            --trivy-scan-ref ./iac/aws
+          "$PYTHON_BIN" -m src.scanners.runner \
+            --checkov \
+            --tfsec \
+            --trivy \
+            --output-dir ./scan_results/openstack_iac \
+            --provider openstack \
+            --terraform-dir ./iac/openstack \
+            --trivy-scan-ref ./iac/openstack
+          python scripts/merge_json_collections.py \
+            --inputs ./scan_results/aws/findings.json ./scan_results/openstack_iac/findings.json \
+            --dedup-findings \
+            --output ./scan_results/findings.json
 
       - name: Triage findings
         run: |
@@ -277,7 +289,7 @@ jobs:
           python -m src.remediation.iac_pr_prepare \
             --findings ./scan_results/findings.json \
             --decisions ./triage_results/decisions.json \
-            --terraform-dir ./iac/terraform \
+            --terraform-dir ./iac/aws \
             --output-dir ./artifacts/iac_pr \
             --run-label checkov_pr_bundle \
             --pipeline-source github-actions-iac \
@@ -341,7 +353,7 @@ jobs:
 
       - uses: aquasecurity/tfsec-action@v1.0.0
         with:
-          working_directory: ./iac/terraform
+          working_directory: ./iac/aws
           format: json
           additional_args: --out tfsec-report.json
         continue-on-error: true
@@ -350,4 +362,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tfsec-report
-          path: ./iac/terraform/tfsec-report.json
+          path: ./iac/aws/tfsec-report.json

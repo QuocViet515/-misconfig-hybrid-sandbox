@@ -1,0 +1,363 @@
+name: Hybrid infrastructure delivery (self-hosted)
+on:
+  push:
+    branches:
+      - main
+      - feat/normalize
+    paths:
+      - 'iac/aws/**'
+      - 'iac/openstack/**'
+      - 'openstack/**'
+      - 'src/**'
+      - 'ansible/**'
+      - 'policy/**'
+      - 'scripts/**'
+      - '.github/workflows/hybrid_delivery_pipeline.yml'
+      - '.github/workflows/hybrid_runtime_scan.yml'
+  workflow_dispatch:
+    inputs:
+      deploy_aws_stack:
+        description: "Deploy the AWS Terraform stack before runtime scan/remediation"
+        required: false
+        default: "true"
+      deploy_openstack_stack:
+        description: "Deploy the OpenStack Terraform stack before runtime scan/remediation"
+        required: false
+        default: "true"
+      include_aws_scan:
+        description: "Run AWS runtime + IaC scanners after deployment"
+        required: false
+        default: "true"
+      include_openstack_scan:
+        description: "Run OpenStack export and normalization after deployment"
+        required: false
+        default: "true"
+      include_openstack_object_storage:
+        description: "Include the optional M1 OpenStack object storage scenario"
+        required: false
+        default: "false"
+      publish_to_siem:
+        description: "Publish post-deployment findings and remediation data to Elasticsearch"
+        required: false
+        default: "true"
+      dispatch_live_integrations:
+        description: "Send triage notifications to Jira/ServiceNow/Slack/Teams"
+        required: false
+        default: "false"
+      enable_runtime_remediation:
+        description: "Execute runtime remediation after deployment"
+        required: false
+        default: "true"
+      generate_iac_pr:
+        description: "Generate the IaC remediation PR bundle after deployment"
+        required: false
+        default: "true"
+      force_rds_cutover:
+        description: "Force the M4 encrypted RDS replacement cutover"
+        required: false
+        default: "false"
+      delete_archived_rds:
+        description: "Delete the archived pre-cutover RDS instance after force cutover"
+        required: false
+        default: "false"
+      openrc_path:
+        description: "Path to the OpenStack RC file on the self-hosted runner"
+        required: false
+        default: "/etc/kolla/admin-openrc.sh"
+      openstack_activate_path:
+        description: "Path to the OpenStack CLI/Kolla virtualenv activation script on the self-hosted runner"
+        required: false
+        default: "~/kolla-venv/bin/activate"
+      project_prefix:
+        description: "Resource prefix shared across the AWS/OpenStack demo lab"
+        required: false
+        default: "threat-demo"
+      aws_region:
+        description: "AWS region for deployment, scanners, and remediation"
+        required: false
+        default: "ap-southeast-1"
+      pipeline_source:
+        description: "Pipeline source tag stored in Elasticsearch"
+        required: false
+        default: "github-self-hosted-hybrid"
+
+jobs:
+  pre-deployment-checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_aws_stack || 'true' }}
+      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_openstack_stack || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Install base dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests
+
+      - name: Install Checkov
+        run: |
+          python -m venv /tmp/checkov-venv
+          /tmp/checkov-venv/bin/pip install --upgrade pip
+          /tmp/checkov-venv/bin/pip install -r requirements-checkov.txt
+
+      - name: Install tfsec and Trivy
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+
+      - name: Terraform format check
+        run: |
+          terraform fmt -check -recursive ./iac/aws ./iac/openstack
+
+      - name: Terraform validate AWS stack
+        if: env.CFG_DEPLOY_AWS_STACK == 'true'
+        run: |
+          terraform -chdir=./iac/aws init -input=false -backend=false
+          terraform -chdir=./iac/aws validate
+
+      - name: Terraform validate OpenStack stack
+        if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
+          terraform -chdir=./iac/openstack init -input=false -backend=false
+          terraform -chdir=./iac/openstack validate
+
+      - name: Run container secret guard (non-blocking evidence)
+        id: container_secret_guard
+        run: |
+          set +e
+          python scripts/scan_container_secrets.py \
+            --paths ./iac/aws/m6_container_secrets.tf ./iac/aws/docker \
+            --output ./artifacts/security/container_secret_report.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Run pre-deployment IaC scans for AWS
+        if: env.CFG_DEPLOY_AWS_STACK == 'true'
+        run: |
+          PYTHON_BIN="$(command -v python)"
+          export PATH="/tmp/checkov-venv/bin:$PATH"
+          "$PYTHON_BIN" -m src.scanners.runner \
+            --checkov \
+            --tfsec \
+            --trivy \
+            --provider aws \
+            --terraform-dir ./iac/aws \
+            --trivy-scan-ref ./iac/aws \
+            --output-dir ./scan_results/pre_deploy/aws
+
+      - name: Run pre-deployment IaC scans for OpenStack
+        if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
+          PYTHON_BIN="$(command -v python)"
+          export PATH="/tmp/checkov-venv/bin:$PATH"
+          "$PYTHON_BIN" -m src.scanners.runner \
+            --checkov \
+            --tfsec \
+            --trivy \
+            --provider openstack \
+            --terraform-dir ./iac/openstack \
+            --trivy-scan-ref ./iac/openstack \
+            --output-dir ./scan_results/pre_deploy/openstack
+
+      - name: Merge pre-deployment findings
+        run: |
+          INPUTS=()
+          if [[ -f ./scan_results/pre_deploy/aws/findings.json ]]; then
+            INPUTS+=(./scan_results/pre_deploy/aws/findings.json)
+          fi
+          if [[ -f ./scan_results/pre_deploy/openstack/findings.json ]]; then
+            INPUTS+=(./scan_results/pre_deploy/openstack/findings.json)
+          fi
+          if [[ "${#INPUTS[@]}" -gt 0 ]]; then
+            python scripts/merge_json_collections.py \
+              --inputs "${INPUTS[@]}" \
+              --dedup-findings \
+              --output ./scan_results/pre_deployment_findings.json
+            python -m src.triage.engine \
+              --input ./scan_results/pre_deployment_findings.json \
+              --output ./triage_results/pre_deployment_decisions.json
+          else
+            echo "No pre-deployment findings generated." > ./scan_results/pre_deployment_findings.txt
+          fi
+
+      - name: Upload pre-deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-deployment-check-artifacts
+          if-no-files-found: warn
+          path: |
+            scan_results/pre_deploy/
+            scan_results/pre_deployment_findings.json
+            scan_results/pre_deployment_findings.txt
+            triage_results/pre_deployment_decisions.json
+            artifacts/security/container_secret_report.json
+
+      - name: Write workflow summary
+        run: |
+          {
+            echo "## Pre-deployment checks summary"
+            echo ""
+            echo "- AWS deploy target enabled: \`${CFG_DEPLOY_AWS_STACK}\`"
+            echo "- OpenStack deploy target enabled: \`${CFG_DEPLOY_OPENSTACK_STACK}\`"
+            echo "- Container secret guard exit code: \`${{ steps.container_secret_guard.outputs.exit_code }}\`"
+            echo "- Findings are published as artifacts for review before deployment."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  approval-gate:
+    needs: pre-deployment-checks
+    runs-on: ubuntu-latest
+    environment:
+      name: hybrid-cloud-deploy
+    steps:
+      - name: Await deployment approval
+        run: |
+          echo "Deployment gate satisfied for hybrid-cloud-deploy."
+
+  deploy-infrastructure:
+    needs: approval-gate
+    runs-on:
+      - self-hosted
+      - linux
+      - openstack
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CFG_DEPLOY_AWS_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_aws_stack || 'true' }}
+      CFG_DEPLOY_OPENSTACK_STACK: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_openstack_stack || 'true' }}
+      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.include_openstack_object_storage || 'false' }}
+      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
+      CFG_OPENSTACK_ACTIVATE_PATH: ${{ github.event_name == 'workflow_dispatch' && inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
+      CFG_PROJECT_PREFIX: ${{ github.event_name == 'workflow_dispatch' && inputs.project_prefix || 'threat-demo' }}
+      CFG_AWS_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.aws_region || 'ap-southeast-1' }}
+      CFG_OPENSTACK_DEMO_PASSWORD: "ChangeMe123!"
+      TFSTATE_ROOT: "~/.misconfig-hybrid-sandbox/tfstate"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Restore persistent Terraform state
+        run: |
+          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          mkdir -p "${REAL_TFSTATE_ROOT}"
+          bash ./scripts/sync_terraform_state.sh restore ./iac/aws "${REAL_TFSTATE_ROOT}" aws
+          bash ./scripts/sync_terraform_state.sh restore ./iac/openstack "${REAL_TFSTATE_ROOT}" openstack
+
+      - name: Verify AWS authentication
+        if: env.CFG_DEPLOY_AWS_STACK == 'true'
+        env:
+          AWS_REGION: ${{ env.CFG_AWS_REGION }}
+        run: |
+          aws sts get-caller-identity >/dev/null
+
+      - name: Verify OpenStack authentication
+        if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
+          OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
+          OPENRC_PATH="${CFG_OPENRC_PATH}"
+          if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
+            source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+          fi
+          set -a
+          source "${OPENRC_PATH/#\~/$HOME}"
+          set +a
+          openstack token issue -f value -c id >/dev/null
+
+      - name: Deploy AWS Terraform stack
+        if: env.CFG_DEPLOY_AWS_STACK == 'true'
+        env:
+          AWS_REGION: ${{ env.CFG_AWS_REGION }}
+        run: |
+          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          mkdir -p ./artifacts/deploy
+          terraform -chdir=./iac/aws init -input=false
+          terraform -chdir=./iac/aws apply -auto-approve \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_prefix=${CFG_PROJECT_PREFIX}"
+          terraform -chdir=./iac/aws output -json > ./artifacts/deploy/aws_outputs.json
+          bash ./scripts/sync_terraform_state.sh save ./iac/aws "${REAL_TFSTATE_ROOT}" aws
+
+      - name: Deploy OpenStack Terraform stack
+        if: env.CFG_DEPLOY_OPENSTACK_STACK == 'true'
+        run: |
+          REAL_TFSTATE_ROOT="${TFSTATE_ROOT/#\~/$HOME}"
+          mkdir -p ./artifacts/deploy
+          OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
+          OPENRC_PATH="${CFG_OPENRC_PATH}"
+          if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
+            source "${OPENSTACK_ACTIVATE_PATH/#\~/$HOME}"
+          fi
+          set -a
+          source "${OPENRC_PATH/#\~/$HOME}"
+          set +a
+          terraform -chdir=./iac/openstack init -input=false
+          terraform -chdir=./iac/openstack apply -auto-approve \
+            -var="project_prefix=${CFG_PROJECT_PREFIX}" \
+            -var="demo_password=${CFG_OPENSTACK_DEMO_PASSWORD}" \
+            -var="include_object_storage=${CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE}"
+          terraform -chdir=./iac/openstack output -json > ./artifacts/deploy/openstack_outputs.json
+          bash ./scripts/sync_terraform_state.sh save ./iac/openstack "${REAL_TFSTATE_ROOT}" openstack
+
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployed-infrastructure-outputs
+          if-no-files-found: warn
+          path: |
+            artifacts/deploy/aws_outputs.json
+            artifacts/deploy/openstack_outputs.json
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "## Deployment summary"
+            echo ""
+            echo "- AWS stack deployed: \`${CFG_DEPLOY_AWS_STACK}\`"
+            echo "- OpenStack stack deployed: \`${CFG_DEPLOY_OPENSTACK_STACK}\`"
+            echo "- Project prefix: \`${CFG_PROJECT_PREFIX}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  post-deployment-scan-remediate:
+    needs: deploy-infrastructure
+    uses: ./.github/workflows/hybrid_runtime_scan.yml
+    with:
+      include_aws_scan: ${{ github.event_name == 'workflow_dispatch' && inputs.include_aws_scan || 'true' }}
+      include_openstack_scan: ${{ github.event_name == 'workflow_dispatch' && inputs.include_openstack_scan || 'true' }}
+      include_openstack_object_storage: ${{ github.event_name == 'workflow_dispatch' && inputs.include_openstack_object_storage || 'false' }}
+      publish_to_siem: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_siem || 'true' }}
+      dispatch_live_integrations: ${{ github.event_name == 'workflow_dispatch' && inputs.dispatch_live_integrations || 'false' }}
+      enable_runtime_remediation: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_runtime_remediation || 'true' }}
+      reconcile_m5_drift: "false"
+      simulate_m5_drift: "false"
+      generate_iac_pr: ${{ github.event_name == 'workflow_dispatch' && inputs.generate_iac_pr || 'true' }}
+      force_rds_cutover: ${{ github.event_name == 'workflow_dispatch' && inputs.force_rds_cutover || 'false' }}
+      delete_archived_rds: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_archived_rds || 'false' }}
+      openrc_path: ${{ github.event_name == 'workflow_dispatch' && inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
+      openstack_activate_path: ${{ github.event_name == 'workflow_dispatch' && inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
+      project_prefix: ${{ github.event_name == 'workflow_dispatch' && inputs.project_prefix || 'threat-demo' }}
+      aws_region: ${{ github.event_name == 'workflow_dispatch' && inputs.aws_region || 'ap-southeast-1' }}
+      pipeline_source: ${{ github.event_name == 'workflow_dispatch' && inputs.pipeline_source || 'github-self-hosted-hybrid' }}
+    secrets: inherit

@@ -2,7 +2,7 @@ from src.scanners.tfsec_scanner import TfsecScanner
 
 
 def test_tfsec_normalizes_core_fields():
-    scanner = TfsecScanner(provider="aws", terraform_dir="./iac/terraform")
+    scanner = TfsecScanner(provider="aws", terraform_dir="./iac/aws")
     normalized = scanner.normalize_findings(
         [
             {
@@ -14,7 +14,7 @@ def test_tfsec_normalizes_core_fields():
                 "resource": "aws_s3_bucket.demo",
                 "links": ["https://docs.example/cis-3.1"],
                 "location": {
-                    "filename": "iac/terraform/m4_unencrypted_storage.tf",
+                    "filename": "iac/aws/m4_unencrypted_storage.tf",
                     "start_line": 11,
                     "end_line": 18,
                 },
@@ -32,6 +32,6 @@ def test_tfsec_normalizes_core_fields():
     assert finding.resource_id == "aws_s3_bucket.demo"
     assert finding.remediation_type == "pr"
     assert finding.cis_controls == ["https://docs.example/cis-3.1"]
-    assert finding.metadata["file_path"] == "iac/terraform/m4_unencrypted_storage.tf"
+    assert finding.metadata["file_path"] == "iac/aws/m4_unencrypted_storage.tf"
     assert finding.metadata["start_line"] == 11
     assert finding.metadata["resolution"] == "Enable bucket encryption."

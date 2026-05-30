@@ -30,13 +30,17 @@ python3 -m venv .venv
 - `tests/test_notifications.py`
 - `tests/test_drift_reconcile.py`
 - `tests/test_scan_container_secrets.py`
+- `tests/test_merge_json_collections.py`
+- `tests/test_openstack_findings.py`
 
 ## 4) CI coverage
 
-Hai workflow chính hiện chạy `pytest` trước scanner/remediation:
+Các workflow chính hiện chạy `pytest` trước scanner/remediation:
 
 - `.github/workflows/hybrid_runtime_scan.yml`
 - `.github/workflows/iac_scan.yml`
+- `.github/workflows/hybrid_delivery_pipeline.yml`
+- `.github/workflows/detect_iac_drift.yml`
 
 Điều này giúp fail sớm nếu:
 
@@ -45,3 +49,21 @@ Hai workflow chính hiện chạy `pytest` trước scanner/remediation:
 - live integration payload routing bị regression
 - drift reconciliation summary bị lệch khỏi Terraform plan
 - rule block container secret bị regression
+
+## 5) IaC drift detection
+
+Workflow `.github/workflows/detect_iac_drift.yml` dùng:
+
+- `terraform plan -refresh-only -detailed-exitcode`
+- state snapshot được lưu bền trên self-hosted runner qua `scripts/sync_terraform_state.sh`
+
+Điều này cho phép phát hiện drift giữa:
+
+- desired state trong `iac/aws` hoặc `iac/openstack`
+- state Terraform đã lưu
+- runtime state thật trên cloud
+
+Lưu ý:
+
+- workflow drift sẽ fail rõ ràng nếu runner chưa restore được `terraform.tfstate` cho stack tương ứng
+- state snapshot hiện được lưu sau bước deploy trong workflow `.github/workflows/hybrid_delivery_pipeline.yml`

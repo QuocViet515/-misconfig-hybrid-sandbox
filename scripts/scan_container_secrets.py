@@ -45,7 +45,7 @@ RULES = [
 ]
 
 ALLOWED_SUFFIXES = {".tf", ".dockerfile", ".txt", ".env", ".yaml", ".yml", ".json", ""}
-DEFAULT_PATHS = ["iac/terraform/m6_container_secrets.tf", "iac/terraform/docker"]
+DEFAULT_PATHS = ["iac/aws/m6_container_secrets.tf", "iac/aws/docker"]
 
 
 def parse_args() -> argparse.Namespace:

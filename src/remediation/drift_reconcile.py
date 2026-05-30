@@ -147,7 +147,7 @@ def summarize_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Detect and reconcile the M5 Terraform drift scenario")
-    parser.add_argument("--terraform-dir", default="iac/terraform")
+    parser.add_argument("--terraform-dir", default="iac/aws")
     parser.add_argument("--region", default="ap-southeast-1")
     parser.add_argument("--project-prefix", default="threat-demo")
     parser.add_argument("--sg-id", default="")

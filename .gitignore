@@ -5,7 +5,7 @@ crash.log
 
 terraform.tfvars
 *.tfvars
-aws/
+.aws/
 
 __pycache__/
 *.pyc
@@ -14,8 +14,8 @@ scan_results/
 triage_results/
 artifacts/
 reports/raw/
-iac/terraform/docker/
-iac/terraform/scripts/
+iac/aws/docker/
+iac/aws/scripts/
 
 venv/
 .venv/

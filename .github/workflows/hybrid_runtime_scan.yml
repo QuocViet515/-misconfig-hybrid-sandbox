@@ -1,16 +1,75 @@
 name: Hybrid runtime scan (self-hosted)
 on:
-  push:
-    branches:
-      - main
-      - feat/normalize
-    paths:
-      - 'iac/terraform/**'
-      - 'openstack/**'
-      - 'src/**'
-      - 'ansible/**'
-      - 'policy/**'
-      - '.github/workflows/hybrid_runtime_scan.yml'
+  workflow_call:
+    inputs:
+      include_aws_scan:
+        required: false
+        type: string
+        default: "true"
+      include_openstack_scan:
+        required: false
+        type: string
+        default: "true"
+      include_openstack_object_storage:
+        required: false
+        type: string
+        default: "false"
+      publish_to_siem:
+        required: false
+        type: string
+        default: "true"
+      dispatch_live_integrations:
+        required: false
+        type: string
+        default: "false"
+      enable_runtime_remediation:
+        required: false
+        type: string
+        default: "false"
+      reconcile_m5_drift:
+        required: false
+        type: string
+        default: "false"
+      simulate_m5_drift:
+        required: false
+        type: string
+        default: "false"
+      generate_iac_pr:
+        required: false
+        type: string
+        default: "true"
+      force_rds_cutover:
+        required: false
+        type: string
+        default: "false"
+      delete_archived_rds:
+        required: false
+        type: string
+        default: "false"
+      openrc_path:
+        required: false
+        type: string
+        default: "/etc/kolla/admin-openrc.sh"
+      openstack_activate_path:
+        required: false
+        type: string
+        default: "~/kolla-venv/bin/activate"
+      project_prefix:
+        required: false
+        type: string
+        default: "threat-demo"
+      aws_region:
+        required: false
+        type: string
+        default: "ap-southeast-1"
+      pipeline_source:
+        required: false
+        type: string
+        default: "github-self-hosted-hybrid"
+      approved_manual_finding_ids:
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       include_aws_scan:
@@ -73,6 +132,10 @@ on:
         description: "AWS region for runtime scanners and remediation"
         required: false
         default: "ap-southeast-1"
+      approved_manual_finding_ids:
+        description: "Comma-separated finding_id values explicitly approved for manual runtime remediation"
+        required: false
+        default: ""
       pipeline_source:
         description: "Pipeline source tag stored in Elasticsearch"
         required: false
@@ -93,22 +156,23 @@ jobs:
       ELASTICSEARCH_HOST: ${{ secrets.ELASTICSEARCH_HOST }}
       ELASTICSEARCH_PORT: ${{ secrets.ELASTICSEARCH_PORT }}
       ELASTICSEARCH_SCHEME: ${{ secrets.ELASTICSEARCH_SCHEME }}
-      CFG_INCLUDE_AWS_SCAN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_aws_scan || 'true' }}
-      CFG_INCLUDE_OPENSTACK_SCAN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_scan || 'true' }}
-      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.include_openstack_object_storage || 'false' }}
-      CFG_PUBLISH_TO_SIEM: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_to_siem || 'true' }}
-      CFG_DISPATCH_LIVE_INTEGRATIONS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dispatch_live_integrations || 'false' }}
-      CFG_ENABLE_RUNTIME_REMEDIATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.enable_runtime_remediation || 'false' }}
-      CFG_RECONCILE_M5_DRIFT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.reconcile_m5_drift || 'false' }}
-      CFG_SIMULATE_M5_DRIFT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.simulate_m5_drift || 'false' }}
-      CFG_GENERATE_IAC_PR: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.generate_iac_pr || 'false' }}
-      CFG_FORCE_RDS_CUTOVER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_rds_cutover || 'false' }}
-      CFG_DELETE_ARCHIVED_RDS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.delete_archived_rds || 'false' }}
-      CFG_OPENRC_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
-      CFG_OPENSTACK_ACTIVATE_PATH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
-      CFG_PROJECT_PREFIX: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.project_prefix || 'threat-demo' }}
-      CFG_AWS_REGION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.aws_region || 'ap-southeast-1' }}
-      CFG_PIPELINE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pipeline_source || 'github-self-hosted-hybrid' }}
+      CFG_INCLUDE_AWS_SCAN: ${{ inputs.include_aws_scan || 'true' }}
+      CFG_INCLUDE_OPENSTACK_SCAN: ${{ inputs.include_openstack_scan || 'true' }}
+      CFG_INCLUDE_OPENSTACK_OBJECT_STORAGE: ${{ inputs.include_openstack_object_storage || 'false' }}
+      CFG_PUBLISH_TO_SIEM: ${{ inputs.publish_to_siem || 'true' }}
+      CFG_DISPATCH_LIVE_INTEGRATIONS: ${{ inputs.dispatch_live_integrations || 'false' }}
+      CFG_ENABLE_RUNTIME_REMEDIATION: ${{ inputs.enable_runtime_remediation || 'false' }}
+      CFG_RECONCILE_M5_DRIFT: ${{ inputs.reconcile_m5_drift || 'false' }}
+      CFG_SIMULATE_M5_DRIFT: ${{ inputs.simulate_m5_drift || 'false' }}
+      CFG_GENERATE_IAC_PR: ${{ inputs.generate_iac_pr || 'false' }}
+      CFG_FORCE_RDS_CUTOVER: ${{ inputs.force_rds_cutover || 'false' }}
+      CFG_DELETE_ARCHIVED_RDS: ${{ inputs.delete_archived_rds || 'false' }}
+      CFG_OPENRC_PATH: ${{ inputs.openrc_path || '/etc/kolla/admin-openrc.sh' }}
+      CFG_OPENSTACK_ACTIVATE_PATH: ${{ inputs.openstack_activate_path || '~/kolla-venv/bin/activate' }}
+      CFG_PROJECT_PREFIX: ${{ inputs.project_prefix || 'threat-demo' }}
+      CFG_AWS_REGION: ${{ inputs.aws_region || 'ap-southeast-1' }}
+      CFG_APPROVED_MANUAL_FINDING_IDS: ${{ inputs.approved_manual_finding_ids || '' }}
+      CFG_PIPELINE_SOURCE: ${{ inputs.pipeline_source || 'github-self-hosted-hybrid' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -208,8 +272,9 @@ jobs:
             --checkov \
             --tfsec \
             --trivy \
-            --terraform-dir ./iac/terraform \
-            --trivy-scan-ref ./iac/terraform \
+            --provider aws \
+            --terraform-dir ./iac/aws \
+            --trivy-scan-ref ./iac/aws \
             --output-dir ./scan_results/aws
 
       - name: Export and normalize OpenStack findings
@@ -257,6 +322,7 @@ jobs:
           fi
           python scripts/merge_json_collections.py \
             --inputs "${MERGE_INPUTS[@]}" \
+            --dedup-findings \
             --output ./scan_results/hybrid_findings.json
 
       - name: Triage hybrid findings
@@ -321,6 +387,16 @@ jobs:
           PYTHON_BIN="$(command -v python)"
           export PATH="/tmp/remediation-venv/bin:$HOME/.local/bin:$PATH"
           RDS_ARGS=()
+          APPROVAL_ARGS=()
+          if [[ -n "${CFG_APPROVED_MANUAL_FINDING_IDS}" ]]; then
+            IFS=',' read -ra APPROVED_IDS <<< "${CFG_APPROVED_MANUAL_FINDING_IDS}"
+            for finding_id in "${APPROVED_IDS[@]}"; do
+              finding_id="$(echo "${finding_id}" | xargs)"
+              if [[ -n "${finding_id}" ]]; then
+                APPROVAL_ARGS+=(--approve-finding-id "${finding_id}")
+              fi
+            done
+          fi
           if [[ "${CFG_FORCE_RDS_CUTOVER}" == "true" ]]; then
             RDS_ARGS+=(--force-rds-cutover)
           fi
@@ -332,17 +408,27 @@ jobs:
             --decisions ./triage_results/hybrid_decisions.json \
             --region "${AWS_REGION}" \
             --project-prefix "${CFG_PROJECT_PREFIX}" \
-            --approve-all-manual \
             --execute \
             --pipeline-source "${CFG_PIPELINE_SOURCE}-aws-runtime" \
             --branch "${GITHUB_REF_NAME}" \
             --commit-sha "${GITHUB_SHA}" \
+            "${APPROVAL_ARGS[@]}" \
             "${RDS_ARGS[@]}"
 
       - name: Execute OpenStack runtime remediation
         if: env.CFG_ENABLE_RUNTIME_REMEDIATION == 'true' && env.CFG_INCLUDE_OPENSTACK_SCAN == 'true'
         run: |
           PYTHON_BIN="$(command -v python)"
+          APPROVAL_ARGS=()
+          if [[ -n "${CFG_APPROVED_MANUAL_FINDING_IDS}" ]]; then
+            IFS=',' read -ra APPROVED_IDS <<< "${CFG_APPROVED_MANUAL_FINDING_IDS}"
+            for finding_id in "${APPROVED_IDS[@]}"; do
+              finding_id="$(echo "${finding_id}" | xargs)"
+              if [[ -n "${finding_id}" ]]; then
+                APPROVAL_ARGS+=(--approve-finding-id "${finding_id}")
+              fi
+            done
+          fi
           OPENSTACK_ACTIVATE_PATH="${CFG_OPENSTACK_ACTIVATE_PATH}"
           OPENRC_PATH="${CFG_OPENRC_PATH}"
           if [[ -n "${OPENSTACK_ACTIVATE_PATH}" ]]; then
@@ -356,13 +442,13 @@ jobs:
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
             --provider openstack \
-            --approve-all-manual \
             --execute \
             --output-events ./artifacts/remediation/openstack_runtime_events.json \
             --output-findings-after ./artifacts/remediation/openstack_findings_after_runtime.json \
             --pipeline-source "${CFG_PIPELINE_SOURCE}-openstack-runtime" \
             --branch "${GITHUB_REF_NAME}" \
-            --commit-sha "${GITHUB_SHA}"
+            --commit-sha "${GITHUB_SHA}" \
+            "${APPROVAL_ARGS[@]}"
 
       - name: Reconcile M5 drift
         if: env.CFG_RECONCILE_M5_DRIFT == 'true'
@@ -376,7 +462,7 @@ jobs:
             DRIFT_ARGS+=(--simulate-drift)
           fi
           "$PYTHON_BIN" -m src.remediation.drift_reconcile \
-            --terraform-dir ./iac/terraform \
+            --terraform-dir ./iac/aws \
             --region "${AWS_REGION}" \
             --project-prefix "${CFG_PROJECT_PREFIX}" \
             --execute \
@@ -394,7 +480,7 @@ jobs:
           "$PYTHON_BIN" -m src.remediation.iac_pr_prepare \
             --findings ./scan_results/hybrid_findings.json \
             --decisions ./triage_results/hybrid_decisions.json \
-            --terraform-dir ./iac/terraform \
+            --terraform-dir ./iac/aws \
             --output-dir ./artifacts/iac_pr \
             --run-label self_hosted_bundle \
             --pipeline-source "${CFG_PIPELINE_SOURCE}-iac-pr" \

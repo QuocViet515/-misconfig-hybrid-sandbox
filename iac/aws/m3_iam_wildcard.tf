@@ -25,8 +25,8 @@ resource "aws_iam_user_policy" "m3_wildcard_policy" {
       {
         Sid      = "FullAdminAccess"
         Effect   = "Allow"
-        Action   = "*"           #  WILDCARD – cho phép mọi hành động
-        Resource = "*"           #  WILDCARD – trên mọi tài nguyên
+        Action   = "*" #  WILDCARD – cho phép mọi hành động
+        Resource = "*" #  WILDCARD – trên mọi tài nguyên
       }
     ]
   })
@@ -45,7 +45,7 @@ resource "aws_iam_role" "m3_overprivileged_role" {
         Sid    = "AllowAnyAccountAssumeRole"
         Effect = "Allow"
         Principal = {
-          AWS = "*"              #  Bất kỳ principal nào trong AWS
+          AWS = "*" #  Bất kỳ principal nào trong AWS
         }
         Action = "sts:AssumeRole"
       }
@@ -66,13 +66,13 @@ resource "aws_iam_role_policy" "m3_role_wildcard_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "FullWildcardAccess"
-        Effect   = "Allow"
-        Action   = [
-          "iam:*",              #  Full IAM access → có thể tạo thêm user/role
-          "s3:*",               #  Full S3 access
-          "ec2:*",              #  Full EC2 access
-          "sts:*",              #  Full STS → có thể assume thêm role khác
+        Sid    = "FullWildcardAccess"
+        Effect = "Allow"
+        Action = [
+          "iam:*", #  Full IAM access → có thể tạo thêm user/role
+          "s3:*",  #  Full S3 access
+          "ec2:*", #  Full EC2 access
+          "sts:*", #  Full STS → có thể assume thêm role khác
         ]
         Resource = "*"
       }
@@ -100,16 +100,16 @@ resource "aws_iam_group_policy" "m3_group_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "PassRoleWildcard"
-        Effect   = "Allow"
-        Action   = [
-          "iam:PassRole",         #  Có thể pass bất kỳ role nào
+        Sid    = "PassRoleWildcard"
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole", #  Có thể pass bất kỳ role nào
           "iam:CreatePolicyVersion",
           "iam:SetDefaultPolicyVersion",
           "iam:AttachUserPolicy",
           "iam:AttachRolePolicy",
         ]
-        Resource = "*"            #  Trên mọi resource → privilege escalation
+        Resource = "*" #  Trên mọi resource → privilege escalation
       }
     ]
   })
