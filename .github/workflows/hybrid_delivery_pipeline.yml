@@ -186,6 +186,23 @@ jobs:
 
       - name: Install tfsec and Trivy
         run: |
+          install_with_retry() {
+            local attempts="$1"
+            shift
+            local delay=2
+            local n=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [[ "$n" -ge "$attempts" ]]; then
+                return 1
+              fi
+              n=$((n + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
           mkdir -p "$HOME/.local/bin"
           TFSEC_BIN="$(command -v tfsec || true)"
           TRIVY_BIN="$(command -v trivy || true)"
@@ -198,7 +215,7 @@ jobs:
           fi
 
           if [[ -z "$TFSEC_BIN" ]]; then
-            curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+            install_with_retry 3 bash -lc 'curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash'
             TFSEC_BIN="$(command -v tfsec || true)"
             if [[ -z "$TFSEC_BIN" && -x /usr/local/bin/tfsec ]]; then
               TFSEC_BIN=/usr/local/bin/tfsec
@@ -206,7 +223,7 @@ jobs:
           fi
 
           if [[ -z "$TRIVY_BIN" ]]; then
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"
+            install_with_retry 3 bash -lc 'curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$HOME/.local/bin"'
             TRIVY_BIN="$(command -v trivy || true)"
             if [[ -z "$TRIVY_BIN" && -x "$HOME/.local/bin/trivy" ]]; then
               TRIVY_BIN="$HOME/.local/bin/trivy"
